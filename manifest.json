@@ -1,0 +1,9 @@
+{
+  "name": "Jenni — Private Voice & Drive Super-Agent",
+  "short_name": "Hey Jenni",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#060b14",
+  "theme_color": "#10b981",
+  "description": "PIN & Biometric-protected personal voice executive agent for Paras Pranav."
+}
