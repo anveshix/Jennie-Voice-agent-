@@ -1,9 +1,9 @@
 {
-  "name": "Jenni — Private Voice & Drive Super-Agent",
+  "name": "Jenni — AI Voice & Chat Assistant",
   "short_name": "Hey Jenni",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#060b14",
   "theme_color": "#10b981",
-  "description": "PIN & Biometric-protected personal voice executive agent for Paras Pranav."
+  "description": "A voice and text assistant using a server-configured AI provider, with drafts, tasks, and notes kept in this browser. The local PIN is a convenience only."
 }
