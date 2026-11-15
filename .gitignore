@@ -1,6 +1,12 @@
-# gitignore template for LangChain products, e.g., LangGraph, LangSmith
-# website: https://www.langchain.com/
-# website: https://www.langchain.com/langgraph
+# Local provider secrets and per-developer configuration
+.env
+.env.*
+!.env.example
 
-# LangGraph
+# Node and test output
+node_modules/
+coverage/
+*.log
+
+# LangGraph (if used later)
 .langgraph_api/

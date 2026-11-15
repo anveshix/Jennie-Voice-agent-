@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JENNI Super-Agent | Voice Assistant & Local Workspace</title>
+    <title>Jenni | AI Voice & Chat Assistant</title>
     <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -105,7 +105,7 @@
                     <div class="flex flex-wrap items-center gap-1.5">
                         <span class="font-bold text-sm text-white tracking-tight">Hey Jenni</span>
                         <span class="text-[10px] mono px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30">
-                            🕸️ LangGraph + 🌱 Sprout + OpenJarvis
+                            AI Chat + Local Workspace
                         </span>
                         <span id="vocalToneBadge" class="text-[11px] mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                             Tone: Calm
@@ -145,7 +145,7 @@
     <!-- =================================================================== -->
     <main class="flex-1 max-w-3xl w-full mx-auto px-4 py-4 flex flex-col justify-between space-y-3.5">
 
-        <!-- 1. CENTRAL "HEY JENNI" VOICE ORB & OPENJARVIS PRESET BAR -->
+        <!-- 1. VOICE ASSISTANT CONTROLS -->
         <div class="text-center space-y-2.5 py-1">
             <div class="relative inline-flex items-center justify-center">
                 <button type="button" id="btnHeyJenniOrb" class="jenni-orb w-28 h-28 rounded-full bg-gradient-to-b from-slate-900 via-slate-900 to-emerald-950/60 border-2 border-emerald-400/50 flex flex-col items-center justify-center cursor-pointer focus:outline-none">
@@ -159,7 +159,7 @@
             <div class="max-w-md mx-auto space-y-1">
                 <canvas id="voiceWaveCanvas" width="320" height="34" class="w-full h-8 mx-auto"></canvas>
                 <p id="jenniSubtitle" class="text-xs font-medium text-slate-300">
-                    "Hi, I’m Jenni. Type a command or tap the microphone to get started."
+                    “Hi, I’m Jenni. Ask me anything by voice or text.”
                 </p>
                 <div class="flex flex-wrap items-center justify-center gap-2.5 text-[11px] mono text-slate-400 pt-0.5">
                     <span id="pitchReadout">Voice metrics: Session only</span>
@@ -172,28 +172,16 @@
                 </div>
             </div>
 
-            <!-- OpenJarvis 5 Native Preset Pills + Hands-Free Wake Loop -->
+            <!-- Speech controls -->
             <div class="flex flex-wrap items-center justify-center gap-1.5 pt-0.5">
                 <button type="button" id="btnToggleWakeWord" class="px-3 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition">
-                    🟢 Hands-Free "Hey Jenni": OFF
+                    🟢 Hands-Free “Hey Jenni”: OFF
                 </button>
-                <button type="button" data-oj-preset="morning-digest" class="oj-preset-btn px-2.5 py-1 rounded-full text-[11px] mono bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition">
-                    ☀️ jarvis digest --fresh
-                </button>
-                <button type="button" data-oj-preset="deep-research" class="oj-preset-btn px-2.5 py-1 rounded-full text-[11px] mono bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 transition">
-                    🔬 jarvis memory search
-                </button>
-                <button type="button" data-oj-preset="dspy-optimize" class="oj-preset-btn px-2.5 py-1 rounded-full text-[11px] mono bg-violet-500/15 hover:bg-violet-500/25 text-violet-300 border border-violet-500/30 transition">
-                    🧬 jarvis optimize --policy dspy
-                </button>
-                <button type="button" data-oj-preset="sprout-delegate" class="oj-preset-btn px-2.5 py-1 rounded-full text-[11px] mono bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition">
-                    🌱 sprout delegate + mira recall
-                </button>
-                <button type="button" data-oj-preset="workflow-review" class="oj-preset-btn px-2.5 py-1 rounded-full text-[11px] mono bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 transition">
-                    🕸️ langgraph workflow preview
+                <button type="button" id="btnAssistantStatus" class="px-2.5 py-1 rounded-full text-[11px] font-medium bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition">
+                    ℹ️ Assistant status
                 </button>
                 <button type="button" id="btnStopVoice" class="px-2.5 py-1 rounded-full text-[11px] font-medium bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800 transition">
-                    ⏹️ Quiet
+                    ⏹️ Stop voice
                 </button>
             </div>
         </div>
@@ -222,26 +210,17 @@
             </button>
         </div>
 
-        <!-- 3. CLEAN CONVERSATION & GOOGLE DRIVE EXECUTION STREAM -->
+        <!-- 3. AI CONVERSATION STREAM -->
         <div class="bot-card rounded-2xl p-4 flex-1 flex flex-col min-h-[295px]">
-            <!-- Manual Draft Review Banner -->
-            <div id="langgraphInterruptBanner" class="hidden mb-3 p-3 rounded-xl bg-amber-500/15 border border-amber-400/50 text-xs text-amber-100 space-y-2">
-                <div class="flex items-center justify-between">
-                    <span class="font-bold text-amber-300 flex items-center gap-1.5">⏸️ LangGraph `interrupt()` — Constitutional Human-in-the-Loop Gate</span>
-                    <span class="mono text-[10px] px-2 py-0.5 rounded bg-slate-900 text-amber-300">Awaiting manual review</span>
+            <div class="mb-3 rounded-xl bg-slate-950/80 border border-slate-800 px-3 py-2 space-y-1.5">
+                <div class="flex items-center gap-2 text-[11px] font-semibold">
+                    <span id="aiServiceDot" class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
+                    <span id="aiServiceStatus" aria-live="polite" class="text-amber-200">Checking AI connection…</span>
                 </div>
-                <p id="interruptDescription" class="text-[11px] text-slate-200 leading-relaxed">Review the draft before approving. Approval here does not send it to any external service.</p>
-                <div class="flex flex-wrap gap-2">
-                    <button type="button" id="btnApproveInterrupt" class="px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold text-xs hover:bg-emerald-400 transition">
-                        ✓ Approve reviewed draft
-                    </button>
-                    <button type="button" id="btnRejectInterrupt" class="px-3 py-1.5 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/40 font-semibold text-xs hover:bg-rose-500/30 transition">
-                        ✖ Reject draft
-                    </button>
-                </div>
+                <p class="text-[10px] leading-relaxed text-slate-400">Messages and recent chat turns are sent to the server-configured AI provider. Jenni does not save chat history. Browser speech recognition may use your browser’s speech service; if a recording fallback is used, its audio is sent to the configured transcription provider. Local drafts, tasks, and notes are not sent automatically.</p>
             </div>
-            <div id="botChatStream" class="flex-1 space-y-3 overflow-y-auto max-h-[340px] pr-1 custom-scroll">
-                <!-- Humble Jenni messages & OpenJarvis outputs appear here -->
+            <div id="botChatStream" aria-live="polite" class="flex-1 space-y-3 overflow-y-auto max-h-[340px] pr-1 custom-scroll">
+                <!-- Conversation replies appear here. -->
             </div>
 
             <!-- Quick One-Tap Voice/Drive/Task Triggers -->
@@ -271,8 +250,8 @@
 
             <!-- Direct Input Bar for typed commands or browser voice input -->
             <form id="botInputForm" class="mt-2.5 flex gap-2">
-                <input type="text" id="botCommandInput" placeholder="Say 'Hey Jenni...' or ask for a local draft, search, or task summary..." class="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-emerald-400 focus:outline-none text-xs sm:text-sm text-white placeholder-slate-500">
-                <button type="submit" class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition shrink-0">
+                <input type="text" id="botCommandInput" maxlength="4000" autocomplete="off" aria-label="Message Jenni" placeholder="Ask Jenni anything…" class="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-emerald-400 focus:outline-none text-xs sm:text-sm text-white placeholder-slate-500">
+                <button type="submit" id="botSendButton" class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition shrink-0">
                     Send ➔
                 </button>
             </form>
@@ -291,8 +270,8 @@
                     <button type="button" data-drawer="drawer-memory" class="drawer-toggle-btn px-3 py-1.5 rounded-xl bot-card hover:border-slate-600 text-slate-300 font-medium transition">
                         🧠 Local Notes
                     </button>
-                    <button type="button" data-drawer="drawer-oss" class="drawer-toggle-btn px-3 py-1.5 rounded-xl bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/40 text-violet-300 font-semibold transition">
-                        🛡️ OpenJarvis Safety Audit & CLI Runner
+                    <button type="button" data-drawer="drawer-ai-setup" class="drawer-toggle-btn px-3 py-1.5 rounded-xl bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/40 text-violet-300 font-semibold transition">
+                        ⚙️ AI Setup & Privacy
                     </button>
                 </div>
                 <button type="button" id="btnDownloadLastDoc" class="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 font-semibold transition">
@@ -385,49 +364,25 @@
                 <div id="memoryListContainer" class="space-y-1.5 text-xs text-slate-300"></div>
             </div>
 
-            <!-- DRAWER 3: OPEN-SOURCE REFERENCES -->
-            <div id="drawer-oss" class="drawer-panel bot-card rounded-2xl p-4 space-y-3 text-xs">
+            <!-- DRAWER 3: AI PROVIDER SETUP AND PRIVACY -->
+            <div id="drawer-ai-setup" class="drawer-panel bot-card rounded-2xl p-4 space-y-3 text-xs">
                 <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
                     <div>
-                        <h3 class="font-bold uppercase tracking-wider text-emerald-400">🛡️ Open-Source References & CLI Examples</h3>
-                        <p class="text-[11px] text-slate-400">Developed by Stanford Hazy Research & Scaling Intelligence Lab (<a href="https://openjarvis.stanford.edu/" target="_blank" rel="noopener noreferrer" class="text-sky-400 underline">openjarvis.stanford.edu</a> • <a href="https://github.com/open-jarvis/OpenJarvis" target="_blank" rel="noopener noreferrer" class="text-sky-400 underline">GitHub Repo</a>).</p>
+                        <h3 class="font-bold uppercase tracking-wider text-emerald-400">⚙️ Connect a real AI provider</h3>
+                        <p class="text-[11px] text-slate-400">Provider credentials stay on the Node.js server, never in this page.</p>
                     </div>
-                    <button type="button" id="btnRunJarvisDoctor" class="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 mono text-[11px] font-bold hover:bg-emerald-500/30">
-                        ▶ Run `jarvis doctor`
-                    </button>
+                    <span id="setupProviderBadge" class="px-2 py-1 rounded-lg bg-slate-900 text-amber-200 border border-slate-700 text-[10px] mono">Checking setup…</span>
                 </div>
-
-                <!-- Reference notes; this page does not run the external CLI -->
-                <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 text-[11px]">
-                    <div class="font-bold text-white">🔍 External project and command references</div>
-                    <p class="text-slate-300">The links below point to public open-source projects. Review current documentation and configuration before using them. This page is a standalone browser demo: it does not run the external CLI, connect to Google Drive, or guarantee that browser speech services stay on-device.</p>
-                </div>
-
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[11px] text-slate-300">
-                    <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
-                        <a href="https://github.com/open-jarvis/OpenJarvis" target="_blank" rel="noopener noreferrer" class="font-bold text-violet-400 hover:underline">1. open-jarvis/OpenJarvis (Stanford Hazy Research) ↗</a>
-                        <p class="text-slate-400 mt-0.5">Local-first agent primitives: <code>morning-digest</code>, <code>deep-research</code>, <code>scheduled-monitor</code>, and DSPy trace optimization.</p>
-                    </div>
-                    <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
-                        <a href="https://github.com/dscripka/openWakeWord" target="_blank" rel="noopener noreferrer" class="font-bold text-emerald-400 hover:underline">2. dscripka/openWakeWord & snakers4/silero-vad ↗</a>
-                        <p class="text-slate-400 mt-0.5">Public wake-word and VAD references. This page uses browser speech APIs when available.</p>
-                    </div>
-                    <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
-                        <a href="https://github.com/speechbrain/speechbrain" target="_blank" rel="noopener noreferrer" class="font-bold text-sky-400 hover:underline">3. speechbrain/speechbrain (ECAPA-TDNN) ↗</a>
-                        <p class="text-slate-400 mt-0.5">Speech-processing reference. Voice metrics shown by this page are approximate and session-only, not identity verification.</p>
-                    </div>
-                    <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
-                        <a href="https://github.com/rhasspy/piper" target="_blank" rel="noopener noreferrer" class="font-bold text-amber-400 hover:underline">4. rhasspy/piper & WebSpeech Neural TTS ↗</a>
-                        <p class="text-slate-400 mt-0.5">Text-to-speech reference. Current playback uses browser speech synthesis, whose processing depends on the browser and device.</p>
-                    </div>
-                    <div class="p-2.5 rounded-xl bg-slate-950 border border-emerald-500/40 sm:col-span-2">
-                        <a href="https://github.com/prime-radiant-inc/sprout" target="_blank" rel="noopener noreferrer" class="font-bold text-emerald-400 hover:underline">5. prime-radiant-inc/sprout (Recursive Subagent Delegation, Genome Mutation & Mira Memory) ↗</a>
-                        <p class="text-slate-400 mt-0.5">Sprout is a public reference for task decomposition and subagent workflows. This demo displays a generic workflow preview and does not load external account data.</p>
-                    </div>
-                    <div class="p-2.5 rounded-xl bg-slate-950 border border-rose-500/40 sm:col-span-2">
-                        <a href="https://github.com/langchain-ai/langgraph" target="_blank" rel="noopener noreferrer" class="font-bold text-rose-400 hover:underline">6. langchain-ai/langgraph v1.2+ (StateGraph, Checkpointer, `interrupt()` Approval Gate & Long-Term Store) ↗</a>
-                        <p class="text-slate-400 mt-0.5">LangGraph is a public reference for stateful workflows and manual review gates. Approval in this page is a local UI action only; no remote operation is protected or performed.</p>
-                    </div>
+                <ol class="list-decimal pl-5 space-y-1.5 text-slate-300">
+                    <li>Copy <code class="text-emerald-300">.env.example</code> to <code class="text-emerald-300">.env</code> in the project folder.</li>
+                    <li>Set <code class="text-emerald-300">AI_API_KEY</code> and <code class="text-emerald-300">AI_MODEL</code> for your OpenAI-compatible provider.</li>
+                    <li>Run <code class="text-emerald-300">npm start</code>, then open <code class="text-emerald-300">http://localhost:3000</code>.</li>
+                </ol>
+                <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 text-[11px] text-slate-300">
+                    <p>Chat text and recent turns are sent to the configured AI provider and are not stored by Jenni's server. Local drafts, tasks, and notes are not attached automatically.</p>
+                    <p>Browser speech recognition may use your browser's speech service. Hands-free mode gates on the phrase “Hey Jenni” but is not an on-device wake-word model. If browser recognition is unavailable, recorded audio is sent to the configured transcription provider.</p>
+                    <p>No Google Drive, email, or remote-send integration is configured. Saving a response creates a local draft only. The browser PIN is a convenience, not account security.</p>
+                    <p class="text-amber-200">Do not expose this server publicly without authentication and HTTPS. See README.md for setup and privacy details.</p>
                 </div>
             </div>
         </div>
@@ -451,7 +406,7 @@
     <div id="toastBox" class="fixed bottom-4 right-4 z-50 hidden px-3.5 py-2 rounded-xl bg-slate-900 border border-emerald-500/40 text-xs text-white shadow-xl"></div>
 
     <!-- =================================================================== -->
-    <!-- COMPLETE INLINE LOGIC: PIN VAULT, "HEY JENNI", OPENJARVIS & DRIVE   -->
+    <!-- BROWSER UI LOGIC: LOCAL WORKSPACE, AI CHAT, SPEECH INPUT & OUTPUT -->
     <!-- =================================================================== -->
     <script>
         (function () {
@@ -475,7 +430,18 @@
                 driveFiles: [],
                 selectedDriveFileId: null,
                 tasks: [],
-                learnedMemories: []
+                learnedMemories: [],
+                conversation: [],
+                aiConfigured: false,
+                transcriptionConfigured: false,
+                aiModel: '',
+                serverReachable: false,
+                isResponding: false,
+                requestController: null,
+                transcriptionController: null,
+                discardRecording: false,
+                isTranscribing: false,
+                isStartingRecording: false
             };
 
             try {
@@ -516,6 +482,62 @@
                 box.classList.remove('hidden');
                 clearTimeout(window.__jenniToast);
                 window.__jenniToast = setTimeout(() => box.classList.add('hidden'), 3200);
+            }
+
+            function setAIStatus(mode, message) {
+                const status = document.getElementById('aiServiceStatus');
+                const dot = document.getElementById('aiServiceDot');
+                const badge = document.getElementById('setupProviderBadge');
+                const styles = {
+                    ready: { dot: 'bg-emerald-400', text: 'text-emerald-200', badge: 'AI ready', badgeClass: 'bg-emerald-500/10 text-emerald-200 border-emerald-500/30' },
+                    working: { dot: 'bg-sky-400 animate-pulse', text: 'text-sky-200', badge: 'Working…', badgeClass: 'bg-sky-500/10 text-sky-200 border-sky-500/30' },
+                    setup: { dot: 'bg-amber-400', text: 'text-amber-200', badge: 'Setup required', badgeClass: 'bg-amber-500/10 text-amber-200 border-amber-500/30' },
+                    offline: { dot: 'bg-rose-400', text: 'text-rose-200', badge: 'Server offline', badgeClass: 'bg-rose-500/10 text-rose-200 border-rose-500/30' }
+                };
+                const style = styles[mode] || styles.offline;
+                if (status) {
+                    status.textContent = message;
+                    status.className = `${style.text} text-[11px]`;
+                }
+                if (dot) dot.className = `w-2 h-2 rounded-full shrink-0 ${style.dot}`;
+                if (badge) {
+                    badge.textContent = style.badge;
+                    badge.className = `px-2 py-1 rounded-lg border text-[10px] mono ${style.badgeClass}`;
+                }
+            }
+
+            async function refreshAIHealth() {
+                try {
+                    const response = await fetch('/api/health', { cache: 'no-store', headers: { Accept: 'application/json' } });
+                    if (!response.ok) throw new Error('AI server is unavailable.');
+                    const health = await response.json();
+                    state.serverReachable = true;
+                    state.aiConfigured = Boolean(health.configured);
+                    state.transcriptionConfigured = Boolean(health.transcriptionConfigured);
+                    state.aiModel = String(health.model || '');
+                    if (state.aiConfigured) {
+                        setAIStatus('ready', `AI ready · ${state.aiModel || 'configured provider'}`);
+                    } else {
+                        setAIStatus('setup', 'AI is not configured. Open “AI Setup & Privacy” below.');
+                    }
+                    return health;
+                } catch (error) {
+                    state.serverReachable = false;
+                    state.aiConfigured = false;
+                    state.transcriptionConfigured = false;
+                    setAIStatus('offline', 'Cannot reach Jenni’s AI server. Run npm start and open its local URL.');
+                    return null;
+                }
+            }
+
+            function restoreAIStatus() {
+                if (!state.serverReachable) {
+                    setAIStatus('offline', 'Cannot reach Jenni’s AI server. Run npm start and open its local URL.');
+                } else if (!state.aiConfigured) {
+                    setAIStatus('setup', 'AI is not configured. Open “AI Setup & Privacy” below.');
+                } else {
+                    setAIStatus('ready', `AI ready · ${state.aiModel || 'configured provider'}`);
+                }
             }
 
             // --- 2. LOCAL PIN SETUP AND VERIFICATION ---
@@ -618,8 +640,6 @@
 
             // --- 3. AUDIO CHIME & SESSION-ONLY VOICE METRICS ---
             let audioCtx = null;
-            let micAnalyser = null;
-            let micData = null;
 
             function playChime(f1 = 540, f2 = 760) {
                 if (state.muted) return;
@@ -639,22 +659,6 @@
                     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
                     osc.start(now);
                     osc.stop(now + 0.15);
-                } catch (e) {}
-            }
-
-            async function initMicrophoneAnalysis() {
-                if (micAnalyser || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                    const AC = window.AudioContext || window.webkitAudioContext;
-                    if (!audioCtx && AC) audioCtx = new AC();
-                    if (audioCtx) {
-                        const src = audioCtx.createMediaStreamSource(stream);
-                        micAnalyser = audioCtx.createAnalyser();
-                        micAnalyser.fftSize = 128;
-                        src.connect(micAnalyser);
-                        micData = new Uint8Array(micAnalyser.frequencyBinCount);
-                    }
                 } catch (e) {}
             }
 
@@ -742,6 +746,9 @@
             // --- 5. SPEECH RECOGNITION & "HEY JENNI" WAKE-WORD DETECTOR ---
             let recognition = null;
             let listenStartTime = 0;
+            let mediaRecorder = null;
+            let recordingStream = null;
+            let recordingChunks = [];
 
             function initSpeechRecognition() {
                 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -795,17 +802,29 @@
                             return;
                         }
 
+                        if (state.wakeLoopActive && !/(?:\b(?:hey|hi)\s+jenni\b|\bhey\s+jarvis\b|\bjenni\b|हे\s+जेननी|जेननी)/i.test(finalClean)) {
+                            const subtitle = document.getElementById('jenniSubtitle');
+                            if (subtitle) subtitle.textContent = 'Hands-free is on. Waiting for “Hey Jenni”…';
+                            return;
+                        }
                         analyzeVoiceToneFromTranscript(finalClean, duration);
                         handleUserCommand(finalClean);
                     }
                 };
 
-                recognition.onerror = () => stopListeningUI();
+                recognition.onerror = (event) => {
+                    stopListeningUI();
+                    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+                        showToast('Allow microphone and speech recognition access in your browser.');
+                    } else if (event.error && event.error !== 'no-speech' && event.error !== 'aborted') {
+                        showToast('Voice recognition failed. You can still type your message.');
+                    }
+                };
                 recognition.onend = () => {
                     stopListeningUI();
-                    if (state.wakeLoopActive && state.unlocked && !state.speaking) {
+                    if (state.wakeLoopActive && state.unlocked && !state.speaking && !state.isResponding) {
                         setTimeout(() => {
-                            if (state.wakeLoopActive && state.unlocked && !state.speaking && !state.isListening) {
+                            if (state.wakeLoopActive && state.unlocked && !state.speaking && !state.isListening && !state.isResponding) {
                                 startListeningSafely();
                             }
                         }, 450);
@@ -830,9 +849,123 @@
             function startListeningSafely() {
                 if (!recognition) return;
                 try {
-                    recognition.lang = state.language === 'hi' ? 'hi-IN' : 'en-IN';
+                    recognition.lang = state.language === 'hi' ? 'hi-IN' : (state.language === 'en' ? 'en-IN' : 'hi-IN');
                     recognition.start();
                 } catch (e) {}
+            }
+
+            async function toggleAudioRecording() {
+                if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+                    showToast('Microphone recording is not available here. Type your message or try a supported browser.');
+                    return;
+                }
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                    return;
+                }
+                if (state.isStartingRecording) return;
+                state.isStartingRecording = true;
+                try {
+                    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                    recordingChunks = [];
+                    const preferredType = typeof MediaRecorder.isTypeSupported === 'function'
+                        ? ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find(type => MediaRecorder.isTypeSupported(type))
+                        : '';
+                    mediaRecorder = preferredType ? new MediaRecorder(recordingStream, { mimeType: preferredType }) : new MediaRecorder(recordingStream);
+                    mediaRecorder.addEventListener('dataavailable', event => {
+                        if (event.data && event.data.size) recordingChunks.push(event.data);
+                    });
+                    mediaRecorder.addEventListener('stop', () => {
+                        const blob = new Blob(recordingChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+                        recordingStream?.getTracks().forEach(track => track.stop());
+                        recordingStream = null;
+                        state.isListening = false;
+                        stopListeningUI();
+                        if (state.discardRecording) {
+                            state.discardRecording = false;
+                            recordingChunks = [];
+                            return;
+                        }
+                        if (blob.size) transcribeRecording(blob);
+                        else showToast('No audio was captured. Please try again.');
+                    }, { once: true });
+                    mediaRecorder.start();
+                    listenStartTime = Date.now();
+                    state.isListening = true;
+                    const orb = document.getElementById('btnHeyJenniOrb');
+                    const label = document.getElementById('orbActionLabel');
+                    const sub = document.getElementById('orbSubLabel');
+                    if (orb) orb.classList.add('listening');
+                    if (label) label.textContent = 'Recording…';
+                    if (sub) sub.textContent = 'Tap to finish';
+                    const subtitle = document.getElementById('jenniSubtitle');
+                    if (subtitle) subtitle.textContent = '🎙️ Recording… tap the microphone again when you have finished speaking.';
+                } catch (error) {
+                    recordingStream?.getTracks().forEach(track => track.stop());
+                    recordingStream = null;
+                    state.isListening = false;
+                    stopListeningUI();
+                    showToast(error.name === 'NotAllowedError' ? 'Allow microphone access in your browser to use voice input.' : 'Could not start microphone recording. Check your browser permissions.');
+                } finally {
+                    state.isStartingRecording = false;
+                }
+            }
+
+            async function transcribeRecording(blob) {
+                state.isTranscribing = true;
+                const controller = new AbortController();
+                state.transcriptionController = controller;
+                setComposerBusy(true);
+                setAIStatus('working', 'Transcribing your voice…');
+                let handedOffToChat = false;
+                try {
+                    const response = await fetch('/api/transcribe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': blob.type || 'audio/webm', Accept: 'application/json' },
+                        cache: 'no-store',
+                        body: blob,
+                        signal: controller.signal
+                    });
+                    const payload = await response.json().catch(() => null);
+                    if (!response.ok) {
+                        const serverMessage = payload?.error?.message;
+                        if (serverMessage) throw new Error(serverMessage);
+                        if (response.status === 404 || response.status === 405) throw new Error('The AI server is unavailable. Run npm start and open its local URL.');
+                        throw new Error(`Speech transcription failed (HTTP ${response.status}).`);
+                    }
+                    const transcript = String(payload?.text || '').trim();
+                    if (!transcript) throw new Error('No speech was recognized. Please try again or type your message.');
+                    const input = document.getElementById('botCommandInput');
+                    if (input) input.value = transcript;
+                    analyzeVoiceToneFromTranscript(transcript, Date.now() - listenStartTime);
+                    state.isTranscribing = false;
+                    if (state.transcriptionController === controller) state.transcriptionController = null;
+                    setComposerBusy(false);
+                    restoreAIStatus();
+                    if (state.unlocked) {
+                        handedOffToChat = true;
+                        handleUserCommand(transcript);
+                    }
+                } catch (error) {
+                    if (error.name !== 'AbortError' && state.unlocked) {
+                        showToast(error instanceof TypeError ? 'Could not reach the transcription server. Type your message or run npm start.' : error.message);
+                    }
+                } finally {
+                    if (state.transcriptionController === controller) state.transcriptionController = null;
+                    state.isTranscribing = false;
+                    if (!handedOffToChat) {
+                        setComposerBusy(false);
+                        restoreAIStatus();
+                    }
+                }
+            }
+
+            function stopAudioCapture() {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                    return true;
+                }
+                return false;
             }
 
             function stopListeningUI() {
@@ -840,9 +973,11 @@
                 const orb = document.getElementById('btnHeyJenniOrb');
                 const lbl = document.getElementById('orbActionLabel');
                 const sub = document.getElementById('orbSubLabel');
+                const subtitle = document.getElementById('jenniSubtitle');
                 if (orb) orb.classList.remove('listening');
                 if (lbl) lbl.textContent = 'Hey Jenni';
                 if (sub) sub.textContent = state.wakeLoopActive ? 'Hands-Free ON' : 'Tap or Speak';
+                if (subtitle && !state.speaking && !state.isResponding) subtitle.textContent = 'Tap the microphone or type a message.';
             }
 
             // --- 6. LOCAL DRAFT SEARCH AND EDITING ---
@@ -937,58 +1072,189 @@
                 });
             }
 
-            // --- 7. GENERIC ASSISTANT PRESETS ---
-            function executeOpenJarvisPreset(presetType, customArg = '') {
-                const done = state.tasks.filter(task => task.status === 'COMPLETED');
-                const inProgress = state.tasks.filter(task => task.status === 'IN PROGRESS');
-                const remaining = state.tasks.filter(task => task.status === 'REMAINED');
+            // --- 7. REAL AI CHAT AND EXPLICIT LOCAL WORKSPACE ACTIONS ---
+            function localAssistantReply(reply, speechText = reply) {
+                appendMessage('jenni', reply);
+                speakHumble(speechText);
+            }
 
-                if (presetType === 'morning-digest') {
-                    const reply = `Daily summary\n\nCompleted: ${done.length}\nIn progress: ${inProgress.length}\nRemaining: ${remaining.length}\n\nNo sample tasks are preloaded. Add tasks in the local task list to see them here.`;
+            async function showAssistantStatus() {
+                const health = await refreshAIHealth();
+                const aiLine = state.aiConfigured
+                    ? `AI chat: connected (${state.aiModel || 'configured model'})`
+                    : `AI chat: ${health ? 'not configured; add provider settings to .env and restart the server' : 'server unavailable; start with npm start'}`;
+                const speechLine = recognition
+                    ? 'Voice input: browser speech recognition available'
+                    : (typeof MediaRecorder !== 'undefined' && navigator.mediaDevices?.getUserMedia
+                        ? `Voice input: tap-to-record ${state.transcriptionConfigured ? 'transcription endpoint configured' : 'requires AI setup'}`
+                        : 'Voice input: not available in this browser');
+                const reply = [
+                    aiLine,
+                    speechLine,
+                    `Local drafts: ${state.driveFiles.length}`,
+                    `Local tasks: ${state.tasks.length}`,
+                    `Local PIN: ${state.pinVerifier ? 'configured' : 'setup required'} (convenience only)`,
+                    'Google Drive and external sending: not connected.'
+                ].join('\n');
+                appendMessage('jenni', reply);
+                speakHumble(`Jenni status. ${aiLine}. ${speechLine}.`);
+            }
+
+            function getLocalDraftSearchQuery(command) {
+                return command.replace(/\b(?:hey\s+jenni|hi\s+jenni|jenni|jarvis|search|find|list|show|open|edit|editing|update|append|my|local|drafts?|documents?|docs?|in|this|browser|for|please|the|a|an|latest|first|drive|google|saved|save|where|are|is|should|i|folder|location|कहाँ|सेव|ढूँढो|खोजो)\b/gi, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+            }
+
+            function handleLocalCommand(coreCmd) {
+                const lower = coreCmd.toLowerCase();
+
+                if (lower === 'doctor' || lower === 'assistant status' || lower === 'status of jenni') {
+                    showAssistantStatus();
+                    return true;
+                }
+
+                if (lower.includes('where should i save') || lower.includes('where to save') || lower.includes('where are my local drafts') || lower.includes('where are my drafts') || lower.includes('local drafts saved') || lower.includes('folder map') || lower.includes('कहाँ सेव') || lower.includes('किस फोल्डर')) {
+                    localAssistantReply('Local drafts are saved in this browser only. No Google Drive folder is connected.');
+                    return true;
+                }
+
+                const asksForDrive = /\b(?:google drive|my drive|drive folder)\b/i.test(lower);
+                if (asksForDrive && /\b(?:search|find|open|edit|save|upload|send|list)\b/i.test(lower)) {
+                    localAssistantReply('Google Drive is not connected, so I cannot search, edit, upload, or send Drive files. You can use the local draft workspace in this browser.');
+                    return true;
+                }
+
+                const asksForLocalDraft = /\b(?:local draft|local drafts|draft in this browser|drafts in this browser|my drafts)\b/i.test(lower);
+                const draftAction = /\b(?:search|find|list|show|open|edit|update|append|latest|where|saved)\b/i.test(lower);
+                if (asksForLocalDraft && draftAction) {
+                    const results = searchDriveCatalog(getLocalDraftSearchQuery(coreCmd)).slice(0, 5);
+                    if (!results.length) {
+                        localAssistantReply('No matching local drafts were found. Create or save a draft in the local workspace first.');
+                        return true;
+                    }
+                    const wantsEdit = /\b(?:open|edit|update|append)\b/i.test(lower);
+                    if (wantsEdit) {
+                        selectDriveFileForEdit(results[0].id);
+                        renderDriveStudioList();
+                        document.querySelectorAll('.drawer-panel').forEach(panel => panel.classList.remove('open'));
+                        document.getElementById('drawer-drive').classList.add('open');
+                        const reply = `Opened the local draft “${results[0].title}” in the editor. Review your changes and choose Save Local Draft; no remote document will be changed.`;
+                        localAssistantReply(reply, 'The local draft is open in the editor. Review and save locally when ready.');
+                    } else {
+                        const list = results.map(result => `- ${result.title}: ${String(result.snippet || '').slice(0, 140)}`).join('\n');
+                        localAssistantReply(`Local draft search results\n\n${list}`, `Found ${results.length} local draft${results.length === 1 ? '' : 's'}.`);
+                    }
+                    return true;
+                }
+
+                if (lower.startsWith('remember') || lower.startsWith('learn') || lower.startsWith('याद रखो')) {
+                    const note = coreCmd.replace(/^(remember\s+that|remember|learn\s+that|learn|याद\s+रखो\s+कि|याद\s+रखो)\s*/i, '').trim();
+                    if (note) {
+                        state.learnedMemories.unshift(note);
+                        saveState();
+                        renderMemories();
+                        localAssistantReply('Saved that note in this browser. It is not sent to the AI provider.');
+                    } else {
+                        localAssistantReply('What would you like me to remember in this browser?');
+                    }
+                    return true;
+                }
+
+                const asksForTaskSummary = /\b(?:task list|my tasks|local tasks|what tasks|tasks? (?:status|summary|due)|what is done|what's done|what is completed|what remains|what is remaining|what is left|to do list)\b/i.test(lower)
+                    || lower.includes('what remained to do') || lower.includes('क्या पूरा') || lower.includes('क्या बाकी');
+                if (asksForTaskSummary) {
+                    const groups = [
+                        ['Completed', state.tasks.filter(task => task.status === 'COMPLETED')],
+                        ['In progress', state.tasks.filter(task => task.status === 'IN PROGRESS')],
+                        ['Remaining', state.tasks.filter(task => task.status === 'REMAINED')]
+                    ];
+                    const report = groups.map(([label, tasks]) => `${label} (${tasks.length}): ${tasks.length ? tasks.map(task => `${task.title} — ${task.when}`).join('; ') : 'none'}`).join('\n');
+                    const reply = state.tasks.length ? `Local task list\n\n${report}` : 'There are no local tasks yet. Add a task in the Local Tasks panel and I can summarize it.';
+                    localAssistantReply(reply, state.tasks.length ? `You have ${state.tasks.length} local tasks.` : 'There are no local tasks yet.');
+                    return true;
+                }
+
+                if (lower.includes('fake mark') || lower.includes('forge ') || lower.includes('leak student') || lower.includes('bypass pin') || lower.includes('फर्जी')) {
+                    localAssistantReply('Safety check: I cannot help falsify records, expose private information, or bypass access controls. I can help with a legitimate, privacy-respecting alternative.');
+                    return true;
+                }
+                return false;
+            }
+
+            function setComposerBusy(busy) {
+                const input = document.getElementById('botCommandInput');
+                const button = document.getElementById('botSendButton');
+                const form = document.getElementById('botInputForm');
+                if (input) input.disabled = busy;
+                if (button) {
+                    button.disabled = busy;
+                    button.textContent = busy ? 'Thinking…' : 'Send ➔';
+                    button.classList.toggle('opacity-60', busy);
+                    button.classList.toggle('cursor-not-allowed', busy);
+                }
+                if (form) form.setAttribute('aria-busy', busy ? 'true' : 'false');
+            }
+
+            async function askAssistant(userText) {
+                const requestMessages = [...state.conversation, { role: 'user', content: userText }].slice(-12);
+                state.isResponding = true;
+                setComposerBusy(true);
+                setAIStatus('working', 'Jenni is thinking…');
+                const controller = new AbortController();
+                state.requestController = controller;
+                const pending = appendMessage('jenni', 'Thinking…');
+                if (pending) pending.setAttribute('data-pending-reply', 'true');
+
+                try {
+                    const response = await fetch('/api/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                        cache: 'no-store',
+                        body: JSON.stringify({ messages: requestMessages }),
+                        signal: controller.signal
+                    });
+                    const payload = await response.json().catch(() => null);
+                    if (!response.ok) {
+                        const serverMessage = payload?.error?.message;
+                        if (serverMessage) throw new Error(serverMessage);
+                        if (response.status === 404 || response.status === 405) {
+                            throw new Error('The AI server route is not available on this page. Run npm start and open the local server URL.');
+                        }
+                        throw new Error(`AI request failed (HTTP ${response.status}).`);
+                    }
+                    const reply = String(payload?.reply || '').trim();
+                    if (!reply) throw new Error('The AI provider returned an empty reply. Please try again.');
+                    if (!state.unlocked) return;
+                    state.conversation = [...requestMessages, { role: 'assistant', content: reply }].slice(-20);
+                    state.lastGeneratedMarkdown = reply;
+                    if (pending) pending.remove();
+                    appendMessage('jenni', reply, { saveAsDraft: true });
+                    speakHumble(reply);
+                } catch (error) {
+                    if (pending) pending.remove();
+                    if (!state.unlocked || error.name === 'AbortError') return;
+                    const message = error instanceof TypeError
+                        ? 'I could not reach the AI server. Run npm start and open the server URL, then try again.'
+                        : (error.message || 'The AI request failed. Please try again.');
+                    const reply = `I couldn’t get an AI response. ${message}`;
                     appendMessage('jenni', reply);
-                    speakHumble(`Daily summary: ${done.length} completed, ${inProgress.length} in progress, and ${remaining.length} remaining.`);
-                    return;
-                }
-
-                if (presetType === 'deep-research') {
-                    const results = searchDriveCatalog(customArg).slice(0, 5);
-                    const reply = results.length
-                        ? `Local draft search results\n\n${results.map(result => `- ${result.title}: ${String(result.snippet || '').slice(0, 140)}`).join('\n')}`
-                        : 'No matching local drafts were found. This demo has no connected Google Drive account or remote files.';
-                    appendMessage('jenni', reply);
-                    speakHumble(results.length
-                        ? `Found ${results.length} matching local drafts.`
-                        : 'No local drafts matched. Remote Drive access is not configured.');
-                    return;
-                }
-
-                if (presetType === 'dspy-optimize') {
-                    appendMessage('jenni', `Response-style preview\n\nCurrent session tone: ${state.detectedTone}\nCadence: ${state.speechCadence}\n\nVoice metrics are not saved as notes.`);
-                    speakHumble('Response-style preview complete. Voice metrics remain in this session only.');
-                    return;
-                }
-
-                if (presetType === 'sprout-delegate') {
-                    appendMessage('jenni', 'Workflow preview\n\nA general task can be broken into planning, specialist work, and evidence review. No account-specific files or profile details are loaded.');
-                    speakHumble('Workflow preview ready. No account-specific context is loaded.');
-                    return;
-                }
-
-                if (presetType === 'workflow-review') {
-                    appendMessage('jenni', 'Workflow preview\n\nA review flow can pause a draft for manual approval before it is finalized. This demo does not send or update remote documents.');
-                    speakHumble('Workflow preview complete. Remote documents are not connected.');
-                    return;
-                }
-
-                if (presetType === 'doctor') {
-                    appendMessage('jenni', `Workspace status\n\nVoice input: ${recognition ? 'available in this browser' : 'not available in this browser'}\nRemote Drive: not configured\nLocal drafts: ${state.driveFiles.length}\nLocal PIN: ${state.pinVerifier ? 'configured' : 'setup required'}\n\nThe browser lock is a convenience only, not secure authentication.`);
+                    speakHumble(reply);
+                } finally {
+                    if (state.requestController === controller) state.requestController = null;
+                    state.isResponding = false;
+                    setComposerBusy(false);
+                    restoreAIStatus();
                 }
             }
 
-            // --- 8. COMMAND HANDLING ---
             function handleUserCommand(rawText) {
                 if (!state.unlocked) {
                     showToast('Please unlock Jenni with the PIN set for this browser.');
+                    return;
+                }
+                if (state.isResponding || state.isTranscribing) {
+                    showToast('Jenni is still preparing a reply. Please wait.');
                     return;
                 }
                 const query = String(rawText || '').trim();
@@ -998,159 +1264,26 @@
                 const input = document.getElementById('botCommandInput');
                 if (input) input.value = '';
 
-                const coreCmd = query.replace(/^(hey\s+jenni|hi\s+jenni|jenni|hey\s+jarvis)[,\s!]*/i, '').trim();
-                const lower = coreCmd.toLowerCase();
-
-                if (lower.includes('jarvis digest') || lower.includes('morning-digest') || lower.includes('morning digest')) {
-                    executeOpenJarvisPreset('morning-digest');
+                const coreCmd = query.replace(/^(hey\s+jenni|hi\s+jenni|jenni|hey\s+jarvis|हे\s+जेननी|जेननी)[,\s!।]*/i, '').trim();
+                if (!coreCmd) {
+                    askAssistant(query);
                     return;
                 }
-                if (lower.includes('jarvis doctor') || lower === 'doctor') {
-                    executeOpenJarvisPreset('doctor');
-                    return;
-                }
-                if (lower.includes('jarvis optimize') || lower.includes('dspy')) {
-                    executeOpenJarvisPreset('dspy-optimize');
-                    return;
-                }
-                if (lower.includes('sprout') || lower.includes('mira') || lower.includes('genome')) {
-                    executeOpenJarvisPreset('sprout-delegate');
-                    return;
-                }
-                if (lower.startsWith('jarvis memory search')) {
-                    const searchArg = coreCmd.replace(/^jarvis\s+memory\s+search\s*/i, '').trim();
-                    executeOpenJarvisPreset('deep-research', searchArg);
-                    return;
-                }
-                if (lower.includes('langgraph') || lower.includes('workflow review') || lower.includes('cross check') || lower.includes('crosscheck')) {
-                    executeOpenJarvisPreset('workflow-review');
-                    return;
-                }
-
-                if (lower.includes('fake mark') || lower.includes('forge ') || lower.includes('leak student') || lower.includes('bypass pin') || lower.includes('unethical') || lower.includes('फर्जी')) {
-                    const refusal = 'Safety check: I cannot help falsify records, expose private information, or bypass access controls. I can help with a legitimate, privacy-respecting alternative.';
-                    appendMessage('jenni', refusal);
-                    speakHumble(refusal);
-                    return;
-                }
-
-                if (!coreCmd || lower === 'are you there' || lower === 'sun rahi ho') {
-                    const reply = 'Hello! I’m ready to help with a draft, a local task, or a local search.';
-                    appendMessage('jenni', reply);
-                    speakHumble('Hello. I am ready to help.');
-                    return;
-                }
-
-                if (lower.includes('where should i save') || lower.includes('where to save') || lower.includes('where are my local drafts') || lower.includes('local drafts saved') || lower.includes('folder map') || lower.includes('कहाँ सेव') || lower.includes('किस फोल्डर')) {
-                    const reply = 'Drafts created in this demo are saved in this browser only. No remote Drive folder is configured.';
-                    appendMessage('jenni', reply);
-                    speakHumble(reply);
-                    return;
-                }
-
-                if (lower.includes('edit ') || lower.includes('append') || lower.includes('update ') || lower.includes('make changes') || lower.includes('save in') || lower.includes('बदलाव')) {
-                    const target = searchDriveCatalog(coreCmd)[0] || state.driveFiles.find(file => file.id === state.selectedDriveFileId);
-                    if (target) {
-                        selectDriveFileForEdit(target.id);
-                        renderDriveStudioList();
-                        document.querySelectorAll('.drawer-panel').forEach(panel => panel.classList.remove('open'));
-                        document.getElementById('drawer-drive').classList.add('open');
-                        const reply = `Opened the local draft “${target.title}” in the editor. Review your edits and choose Save Local Draft; no remote document will be changed.`;
-                        appendMessage('jenni', reply);
-                        speakHumble('The local draft is open in the editor. Review it and save locally when ready.');
-                    } else {
-                        const reply = 'No local draft was found. Create one in the editor first; remote Drive access is not configured.';
-                        appendMessage('jenni', reply);
-                        speakHumble(reply);
-                    }
-                    return;
-                }
-
-                if (lower.includes('search') || lower.includes('find') || lower.includes('drive') || lower.includes('ढूँढो') || lower.includes('खोजो')) {
-                    const results = searchDriveCatalog(coreCmd).slice(0, 5);
-                    if (!results.length) {
-                        const reply = 'No local drafts matched. Create a draft in the editor or configure a remote integration before searching Drive.';
-                        appendMessage('jenni', reply);
-                        speakHumble(reply);
-                        return;
-                    }
-                    selectDriveFileForEdit(results[0].id);
-                    renderDriveStudioList();
-                    const list = results.map(result => `- ${result.title}: ${String(result.snippet || '').slice(0, 140)}`).join('\n');
-                    appendMessage('jenni', `Local draft search results\n\n${list}`);
-                    speakHumble(`Found ${results.length} matching local drafts.`);
-                    return;
-                }
-
-                if (lower.startsWith('remember') || lower.startsWith('learn') || lower.includes('याद रखो')) {
-                    const note = coreCmd.replace(/^(remember\s+that|remember|learn\s+that|learn|याद\s+रखो\s+कि|याद\s+रखो)\s*/i, '').trim();
-                    if (note) {
-                        state.learnedMemories.unshift(note);
-                        saveState();
-                        renderMemories();
-                        appendMessage('jenni', 'Saved that note in this browser. You can remove browser data to clear it.');
-                        speakHumble('Note saved in this browser.');
-                        return;
-                    }
-                }
-
-                if (lower.includes('what is done') || lower.includes('to do') || lower.includes('remained') || lower.includes('when') || lower.includes('status') || lower.includes('क्या पूरा') || lower.includes('क्या बाकी')) {
-                    const groups = [
-                        ['Completed', state.tasks.filter(task => task.status === 'COMPLETED')],
-                        ['In progress', state.tasks.filter(task => task.status === 'IN PROGRESS')],
-                        ['Remaining', state.tasks.filter(task => task.status === 'REMAINED')]
-                    ];
-                    const report = groups.map(([label, tasks]) => `${label} (${tasks.length}): ${tasks.length ? tasks.map(task => `${task.title} — ${task.when}`).join('; ') : 'none'}`).join('\n');
-                    appendMessage('jenni', `Local task list\n\n${report}`);
-                    speakHumble(`Task list: ${state.tasks.length} tasks stored in this browser.`);
-                    return;
-                }
-
-                const isLetter = lower.includes('letter') || lower.includes('notice') || lower.includes('पत्र');
-                const docTitle = `${isLetter ? 'Official Letter Draft' : 'Workspace Draft'}: ${coreCmd.slice(0, 48)}`;
-                const docBody = isLetter
-                    ? `# Official Letter Draft\n**Reference:** [Add reference] | **Date:** [Add date]\n**To:** [Recipient / organization]\n**Subject:** ${coreCmd}\n\nDear [recipient],\n\n[Add the reviewed content here.]\n\nSincerely,\n[Name and role]`
-                    : `# Draft\n**Topic:** ${coreCmd}\n\n[Add or revise content here.]`;
-
-                state.lastGeneratedMarkdown = docBody;
-                const newDoc = {
-                    id: `draft_${Date.now()}`,
-                    title: docTitle,
-                    type: 'DOC',
-                    category: 'LOCAL',
-                    folderName: 'This browser',
-                    snippet: docBody
-                };
-                state.driveFiles.unshift(newDoc);
-                state.selectedDriveFileId = newDoc.id;
-                saveState();
-                selectDriveFileForEdit(newDoc.id);
-                renderDriveStudioList();
-
-                if (isLetter) {
-                    const banner = document.getElementById('langgraphInterruptBanner');
-                    const description = document.getElementById('interruptDescription');
-                    if (banner && description) {
-                        description.textContent = `Review the draft “${docTitle}” before approving. Approval here does not send it to any external service.`;
-                        banner.classList.remove('hidden');
-                    }
-                }
-
-                appendMessage('jenni', `Created a local draft in this browser. It has not been sent to Google Drive or any external service.\n\n${docBody}`);
-                speakHumble('A draft is ready in this browser. It has not been sent anywhere.');
+                if (handleLocalCommand(coreCmd)) return;
+                askAssistant(coreCmd);
             }
 
             // --- 9. UI RENDERERS ---
-            function appendMessage(sender, markdownText) {
+            function appendMessage(sender, markdownText, options = {}) {
                 const stream = document.getElementById('botChatStream');
-                if (!stream) return;
+                if (!stream) return null;
                 const div = document.createElement('div');
 
                 if (sender === 'user') {
                     div.className = 'flex justify-end';
                     div.innerHTML = `
                         <div class="max-w-[82%] rounded-2xl rounded-tr-sm px-3.5 py-2 bg-emerald-500/15 border border-emerald-500/30 text-xs text-white">
-                            <div class="text-[10px] mono text-emerald-300 mb-0.5">You • ${state.detectedTone}</div>
+                            <div class="text-[10px] mono text-emerald-300 mb-0.5">You • ${escapeHtml(state.detectedTone)}</div>
                             <div>${escapeHtml(markdownText)}</div>
                         </div>
                     `;
@@ -1158,17 +1291,53 @@
                     div.className = 'flex justify-start';
                     div.innerHTML = `
                         <div class="max-w-[94%] rounded-2xl rounded-tl-sm px-4 py-2.5 bg-slate-900/95 border border-slate-800 text-xs text-slate-200 space-y-1">
-                            <div class="text-[10px] mono text-sky-400 font-semibold">Jenni • Local Workspace Assistant</div>
+                            <div class="text-[10px] mono text-sky-400 font-semibold">Jenni • Assistant</div>
                             <div class="leading-relaxed">${formatMd(markdownText)}</div>
                         </div>
                     `;
+                    if (options.saveAsDraft) {
+                        const saveButton = document.createElement('button');
+                        saveButton.type = 'button';
+                        saveButton.className = 'mt-2 px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-[10px] font-semibold text-emerald-300';
+                        saveButton.textContent = 'Save response as local draft';
+                        saveButton.addEventListener('click', () => saveAIResponseAsDraft(markdownText, saveButton));
+                        div.firstElementChild.appendChild(saveButton);
+                    }
                 }
                 stream.appendChild(div);
                 stream.scrollTop = stream.scrollHeight;
+                return div;
+            }
+
+            function saveAIResponseAsDraft(markdownText, button) {
+                const content = String(markdownText || '').trim();
+                if (!content) return;
+                const firstLine = content.replace(/^#+\s*/m, '').replace(/[*_`]/g, '').split(/[\n.!?]/)[0].trim();
+                const title = `AI response: ${(firstLine || 'Saved response').slice(0, 64)}`;
+                const draft = {
+                    id: `draft_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                    title,
+                    type: 'DOC',
+                    category: 'LOCAL',
+                    folderName: 'This browser',
+                    snippet: content
+                };
+                state.driveFiles.unshift(draft);
+                state.selectedDriveFileId = draft.id;
+                state.lastGeneratedMarkdown = `# ${title}\n\n${content}`;
+                saveState();
+                selectDriveFileForEdit(draft.id);
+                renderDriveStudioList();
+                if (button) {
+                    button.disabled = true;
+                    button.textContent = 'Saved locally ✓';
+                    button.classList.add('opacity-60', 'cursor-not-allowed');
+                }
+                showToast('AI response saved in this browser only.');
             }
 
             function escapeHtml(s) {
-                return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
             }
 
             function formatMd(text) {
@@ -1256,14 +1425,7 @@
                 const h = canvas.height;
                 ctx.clearRect(0, 0, w, h);
 
-                let energy = 0;
-                if (micAnalyser && micData && state.isListening) {
-                    micAnalyser.getByteFrequencyData(micData);
-                    let sum = 0;
-                    for (let i = 0; i < micData.length; i++) sum += micData[i];
-                    energy = (sum / micData.length) / 255;
-                }
-
+                const energy = 0;
                 const active = state.isListening || state.speaking;
                 const amp = active ? Math.max(11, energy * 28) : 2.5;
                 ctx.beginPath();
@@ -1298,25 +1460,11 @@
                     updatePinDots();
                 });
 
-                document.getElementById('btnApproveInterrupt').addEventListener('click', () => {
-                    document.getElementById('langgraphInterruptBanner').classList.add('hidden');
-                    const reply = 'Draft approved in this session. It remains in this browser and was not sent to an external service.';
-                    appendMessage('jenni', reply);
-                    speakHumble(reply);
-                });
-
-                document.getElementById('btnRejectInterrupt').addEventListener('click', () => {
-                    document.getElementById('langgraphInterruptBanner').classList.add('hidden');
-                    appendMessage('jenni', 'Draft rejected. It remains local and was not sent anywhere.');
-                    speakHumble('Draft rejected. Nothing was sent anywhere.');
-                });
-
                 document.getElementById('btnVoicePinUnlock').addEventListener('click', async () => {
                     if (!state.pinVerifier) {
                         showToast('Set a custom PIN with the keypad before voice unlock.');
                         return;
                     }
-                    await initMicrophoneAnalysis();
                     if (recognition) {
                         startListeningSafely();
                         showToast('Speak the PIN you set for this browser.');
@@ -1328,12 +1476,20 @@
                 document.getElementById('btnLockNow').addEventListener('click', () => {
                     state.unlocked = false;
                     state.wakeLoopActive = false;
+                    state.conversation = [];
+                    state.requestController?.abort();
+                    state.transcriptionController?.abort();
+                    state.discardRecording = Boolean(mediaRecorder && mediaRecorder.state === 'recording');
                     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
                     if (recognition && state.isListening) {
                         try { recognition.stop(); } catch (e) {}
                     }
+                    stopAudioCapture();
+                    recordingStream?.getTracks().forEach(track => track.stop());
+                    recordingStream = null;
+                    document.getElementById('botChatStream').replaceChildren();
                     document.getElementById('pinLockModal').classList.remove('hidden');
-                    showToast('Workspace locked.');
+                    showToast('Workspace locked. This tab’s chat history was cleared.');
                 });
 
                 document.getElementById('btnChangePin').addEventListener('click', () => {
@@ -1366,43 +1522,40 @@
                 });
 
                 document.getElementById('btnHeyJenniOrb').addEventListener('click', async () => {
-                    await initMicrophoneAnalysis();
+                    if (state.isResponding || state.isTranscribing) {
+                        showToast('Wait for Jenni to finish the current response.');
+                        return;
+                    }
                     if (recognition) {
                         if (state.isListening) {
-                            recognition.stop();
+                            try { recognition.stop(); } catch (e) {}
                         } else {
-                            speakHumble('Hello.');
-                            setTimeout(() => startListeningSafely(), 650);
+                            if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+                            startListeningSafely();
                         }
                     } else {
-                        executeOpenJarvisPreset('morning-digest');
+                        await toggleAudioRecording();
                     }
                 });
 
-                // OpenJarvis Preset Buttons
-                document.querySelectorAll('.oj-preset-btn').forEach(btn => {
-                    btn.addEventListener('click', () => {
-                        executeOpenJarvisPreset(btn.getAttribute('data-oj-preset'));
-                    });
-                });
-
-                document.getElementById('btnRunJarvisDoctor').addEventListener('click', () => {
-                    executeOpenJarvisPreset('doctor');
-                });
+                document.getElementById('btnAssistantStatus').addEventListener('click', showAssistantStatus);
 
                 const btnWake = document.getElementById('btnToggleWakeWord');
-                btnWake.addEventListener('click', async () => {
-                    await initMicrophoneAnalysis();
+                btnWake.addEventListener('click', () => {
+                    if (!recognition) {
+                        showToast('Hands-free wake listening is not supported here. Tap the microphone to speak instead.');
+                        return;
+                    }
                     state.wakeLoopActive = !state.wakeLoopActive;
                     if (state.wakeLoopActive) {
-                        btnWake.textContent = '🔴 Hands-Free "Hey Jenni": ACTIVE';
+                        btnWake.textContent = '🔴 Hands-Free “Hey Jenni”: ACTIVE';
                         btnWake.className = 'px-3 py-1 rounded-full text-[11px] font-semibold bg-emerald-500 text-slate-950 transition';
                         speakHumble('Hands-free mode is active. Say Hey Jenni to begin.');
-                        if (recognition) setTimeout(() => startListeningSafely(), 1800);
+                        setTimeout(() => startListeningSafely(), 1800);
                     } else {
-                        btnWake.textContent = '🟢 Hands-Free "Hey Jenni": OFF';
+                        btnWake.textContent = '🟢 Hands-Free “Hey Jenni”: OFF';
                         btnWake.className = 'px-3 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition';
-                        if (recognition && state.isListening) {
+                        if (state.isListening) {
                             try { recognition.stop(); } catch (e) {}
                         }
                         stopListeningUI();
@@ -1411,6 +1564,17 @@
 
                 document.getElementById('btnStopVoice').addEventListener('click', () => {
                     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+                    if (recognition && state.isListening) {
+                        try { recognition.stop(); } catch (e) {}
+                    }
+                    if (mediaRecorder && mediaRecorder.state === 'recording') {
+                        state.discardRecording = true;
+                        stopAudioCapture();
+                    }
+                    state.wakeLoopActive = false;
+                    const btnWake = document.getElementById('btnToggleWakeWord');
+                    btnWake.textContent = '🟢 Hands-Free “Hey Jenni”: OFF';
+                    btnWake.className = 'px-3 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition';
                     state.speaking = false;
                     document.getElementById('btnHeyJenniOrb').classList.remove('speaking');
                 });
@@ -1561,9 +1725,10 @@
                 bindEvents();
 
                 updatePinLockInstructions();
-                const initialGreeting = 'Welcome to Jenni. Local drafts, tasks, and notes stay in this browser; no Google Drive account is connected.';
+                const initialGreeting = 'Hi! Ask me anything by typing or tapping the microphone. I’ll use the AI provider configured on this server; local tasks, notes, and drafts stay separate in this browser.';
                 appendMessage('jenni', initialGreeting);
                 state.lastGeneratedMarkdown = '';
+                refreshAIHealth();
                 animateWave();
             });
 if ('serviceWorker' in navigator) { navigator.serviceWorker.register('./sw.js').catch(() => {}); }

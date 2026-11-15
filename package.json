@@ -1,0 +1,13 @@
+{
+  "name": "jenni-voice-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Jenni browser voice and chat assistant with a server-side OpenAI-compatible AI proxy",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
