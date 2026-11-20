@@ -26,6 +26,18 @@ An OpenAI-compatible local server can be used without an API key. For example, s
 
 Jenni uses the browser's SpeechRecognition API when available. Browser speech recognition may be processed by a browser or operating-system speech service; its privacy behavior depends on that implementation. If SpeechRecognition is unavailable, Jenni can record audio in the browser and send it to the configured `AI_TRANSCRIPTION_MODEL` endpoint, provided that your chosen provider supports the OpenAI-compatible transcription endpoint. That recording is sent to the configured provider for transcription and is not stored by Jenni's server. Set `AI_TRANSCRIPTION_MODEL=` to disable this fallback.
 
+### Interface
+
+The UI is hand-written CSS plus one small script; it needs no build step and no CDN:
+
+- `index.html` — page structure (lock screen, conversation, workspace rail, drawers)
+- `public/app.css` — design tokens, glass panels, orb motion, responsive layout
+- `public/app.js` — local workspace, speech, and calls to `/api/*`
+- `server.js` — also serves those two files, so the app works offline behind the local server
+
+Motion (orb pulses, aurora drift, staged reveals) is pure CSS and turns off automatically
+when the OS requests reduced motion. Icons are inline SVG, so nothing depends on an emoji font.
+
 ## Privacy and limits
 
 - Each chat request sends the user's message and recent turns from the current tab to the configured AI provider. The conversation stays in tab memory only; it is not written to the app's server or browser storage.

@@ -1,5 +1,5 @@
-const CACHE_NAME = 'jenni-os-v2';
-const APP_FILES = ['./', './index.html', './manifest.json'];
+const CACHE_NAME = 'jenni-os-v3';
+const APP_FILES = ['./', './index.html', './manifest.json', './public/app.css', './public/app.js'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_FILES)));
