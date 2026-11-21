@@ -3,6 +3,8 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
+const providers = require('./public/providers.js');
 
 const ROOT = __dirname;
 const JSON_LIMIT_BYTES = 128 * 1024;
@@ -55,6 +57,95 @@ function loadDotEnv(filePath = path.join(ROOT, '.env'), target = process.env) {
   for (const [key, value] of Object.entries(parseDotEnv(contents))) {
     if (target[key] === undefined) target[key] = value;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Runtime provider settings ("API Room")
+
+   Keys entered in the browser are written to storage/settings.json on the
+   server — never to the browser, never to .env, never to git. That file is
+   chmod 600 and git-ignored. Saving from the browser is only allowed when the
+   request comes from this machine (loopback), so a phone on the same Wi-Fi can
+   use the saved key but cannot replace it.
+--------------------------------------------------------------------------- */
+const STORAGE_DIR = path.join(ROOT, 'storage');
+const SETTINGS_FILE = path.join(STORAGE_DIR, 'settings.json');
+
+function ensureStorageDir() {
+  try {
+    fs.mkdirSync(STORAGE_DIR, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
+}
+
+function readStoredSettings() {
+  try {
+    const raw = fs.readFileSync(SETTINGS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      baseUrl: String(parsed.baseUrl || ''),
+      model: String(parsed.model || ''),
+      transcriptionModel: String(parsed.transcriptionModel === undefined ? '' : parsed.transcriptionModel),
+      apiKey: String(parsed.apiKey || ''),
+      provider: String(parsed.provider || 'custom'),
+      savedAt: String(parsed.savedAt || '')
+    };
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    console.error('Could not read storage/settings.json:', error.message);
+    return null;
+  }
+}
+
+function writeStoredSettings(settings) {
+  ensureStorageDir();
+  const payload = JSON.stringify(settings, null, 2);
+  const temp = `${SETTINGS_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, payload, { mode: 0o600 });
+  fs.renameSync(temp, SETTINGS_FILE);
+  try { fs.chmodSync(SETTINGS_FILE, 0o600); } catch (error) { /* best effort on odd filesystems */ }
+}
+
+function clearStoredSettings() {
+  try {
+    fs.unlinkSync(SETTINGS_FILE);
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+/** Effective config = stored settings first, then .env / process.env. */
+function resolveConfig(env = process.env) {
+  const stored = readStoredSettings();
+  if (stored && stored.baseUrl && stored.model) {
+    const merged = {
+      AI_BASE_URL: stored.baseUrl,
+      AI_MODEL: stored.model,
+      AI_API_KEY: stored.apiKey,
+      AI_TRANSCRIPTION_MODEL: stored.transcriptionModel
+    };
+    return { ...getConfig(merged), provider: stored.provider || 'custom', source: 'room', savedAt: stored.savedAt };
+  }
+  return { ...getConfig(env), provider: detectProvider(getConfig(env).baseUrl), source: 'env', savedAt: '' };
+}
+
+function detectProvider(baseUrl) {
+  const url = String(baseUrl || '').toLowerCase();
+  if (url.includes('api.openai.com')) return 'openai';
+  if (url.includes('api.groq.com')) return 'groq';
+  if (url.includes('generativelanguage.googleapis.com')) return 'gemini';
+  if (url.includes('openrouter.ai')) return 'openrouter';
+  if (url.includes('localhost') || url.includes('127.0.0.1')) return 'ollama';
+  return 'custom';
+}
+
+function requestIsLocal(req) {
+  const address = String((req.socket && req.socket.remoteAddress) || '');
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
 }
 
 function isLoopbackHost(hostname) {
@@ -239,13 +330,15 @@ function createRateLimiter({ limit = 30, windowMs = 10 * 60 * 1000 } = {}) {
 }
 
 function createAppServer({ env = process.env } = {}) {
-  const config = getConfig(env);
+  // Re-read on every request so an API Room save applies without a restart.
+  const currentConfig = () => resolveConfig(env);
   const allowAiRequest = createRateLimiter();
   const files = {
     '/': ['index.html', 'text/html; charset=utf-8'],
     '/index.html': ['index.html', 'text/html; charset=utf-8'],
     '/public/app.css': ['public/app.css', 'text/css; charset=utf-8'],
     '/public/app.js': ['public/app.js', 'text/javascript; charset=utf-8'],
+    '/public/providers.js': ['public/providers.js', 'text/javascript; charset=utf-8'],
     '/README.md': ['README.md', 'text/markdown; charset=utf-8'],
     '/manifest.json': ['manifest.json', 'application/manifest+json; charset=utf-8'],
     '/sw.js': ['sw.js', 'text/javascript; charset=utf-8']
@@ -257,14 +350,115 @@ function createAppServer({ env = process.env } = {}) {
 
     try {
       if (pathname === '/api/health' && (req.method === 'GET' || req.method === 'HEAD')) {
+        const config = currentConfig();
+        return jsonResponse(res, 200, providers.describe(config));
+      }
+
+      /* ---- API Room: read status (key is never returned) ---- */
+      if (pathname === '/api/settings' && req.method === 'GET') {
+        const config = currentConfig();
         return jsonResponse(res, 200, {
-          configured: config.configured,
-          transcriptionConfigured: config.configured && Boolean(config.transcriptionModel),
-          model: config.model
+          ...providers.describe(config),
+          savedAt: config.savedAt || '',
+          canEdit: requestIsLocal(req)
         });
       }
 
+      /* ---- API Room: save provider settings ---- */
+      if (pathname === '/api/settings' && req.method === 'POST') {
+        if (!requestIsLocal(req)) {
+          return jsonResponse(res, 403, { error: { code: 'LOCAL_ONLY', message: 'API keys can only be saved from this computer, not from another device on the network.' } });
+        }
+        const body = await readBody(req, 16 * 1024);
+        let payload;
+        try {
+          payload = JSON.parse(body.toString('utf8'));
+        } catch (error) {
+          throw new HttpError(400, 'INVALID_JSON', 'The settings request was not valid JSON.');
+        }
+        const existing = readStoredSettings();
+        const keepKey = Boolean(payload.keepKey) || Boolean(existing && existing.apiKey && !payload.apiKey);
+        const check = providers.validateSettings({
+          baseUrl: payload.baseUrl,
+          model: payload.model,
+          transcriptionModel: payload.transcriptionModel,
+          apiKey: payload.apiKey
+        }, { keepKey });
+
+        if (!check.valid) {
+          return jsonResponse(res, 400, { error: { code: 'INVALID_SETTINGS', message: check.errors.join(' ') }, errors: check.errors });
+        }
+
+        const nextKey = check.value.apiKey !== undefined ? check.value.apiKey : (existing ? existing.apiKey : '');
+        writeStoredSettings({
+          baseUrl: check.value.baseUrl,
+          model: check.value.model,
+          transcriptionModel: check.value.transcriptionModel,
+          apiKey: nextKey,
+          provider: String(payload.provider || detectProvider(check.value.baseUrl)),
+          savedAt: new Date().toISOString()
+        });
+        const config = currentConfig();
+        return jsonResponse(res, 200, { saved: true, ...providers.describe(config) });
+      }
+
+      /* ---- API Room: forget the saved key ---- */
+      if (pathname === '/api/settings' && req.method === 'DELETE') {
+        if (!requestIsLocal(req)) {
+          return jsonResponse(res, 403, { error: { code: 'LOCAL_ONLY', message: 'Settings can only be cleared from this computer.' } });
+        }
+        const removed = clearStoredSettings();
+        const config = currentConfig();
+        return jsonResponse(res, 200, { cleared: removed, ...providers.describe(config) });
+      }
+
+      /* ---- API Room: live test against the provider ---- */
+      if (pathname === '/api/settings/test' && req.method === 'POST') {
+        if (!allowAiRequest(req)) {
+          return jsonResponse(res, 429, { error: { code: 'APP_RATE_LIMITED', message: 'Too many test requests. Please wait a minute.' } });
+        }
+        const config = currentConfig();
+        if (!config.configured) {
+          return jsonResponse(res, 400, { error: { code: 'NOT_CONFIGURED', message: 'Save a provider first, then test the connection.' } });
+        }
+        const started = Date.now();
+        try {
+          const result = await fetchProvider(config, 'chat/completions', {
+            method: 'POST',
+            headers: providerHeaders(config, { 'Content-Type': 'application/json' }),
+            body: JSON.stringify({
+              model: config.model,
+              messages: [{ role: 'user', content: 'Reply with exactly: ok' }],
+              max_tokens: 8,
+              temperature: 0
+            })
+          });
+          const reply = normalizeProviderContent(result?.choices?.[0]?.message?.content);
+          return jsonResponse(res, 200, {
+            ok: true,
+            ms: Date.now() - started,
+            model: config.model,
+            transcriptionConfigured: Boolean(config.transcriptionModel),
+            sample: reply.slice(0, 120)
+          });
+        } catch (error) {
+          return jsonResponse(res, 200, {
+            ok: false,
+            ms: Date.now() - started,
+            model: config.model,
+            code: error.code || 'AI_UNAVAILABLE',
+            message: error.message || 'The test request failed.'
+          });
+        }
+      }
+
+      /* ---- provider presets for the form ---- */
+      if (pathname === '/api/providers' && req.method === 'GET') {
+        return jsonResponse(res, 200, { presets: providers.PRESETS });
+      }
+
       if (pathname === '/api/chat' && req.method === 'POST') {
+        const config = currentConfig();
         if (!allowAiRequest(req)) {
           return jsonResponse(res, 429, { error: { code: 'APP_RATE_LIMITED', message: 'Too many requests from this connection. Please wait a few minutes and try again.' } });
         }
@@ -298,6 +492,7 @@ function createAppServer({ env = process.env } = {}) {
       }
 
       if (pathname === '/api/transcribe' && req.method === 'POST') {
+        const config = currentConfig();
         if (!allowAiRequest(req)) {
           return jsonResponse(res, 429, { error: { code: 'APP_RATE_LIMITED', message: 'Too many requests from this connection. Please wait a few minutes and try again.' } });
         }
@@ -373,8 +568,10 @@ if (require.main === module) {
     server.listen(port, '0.0.0.0', () => {
       const address = server.address();
       console.log(`Jenni is listening on http://0.0.0.0:${address.port}`);
-      const config = getConfig();
-      console.log(config.configured ? `AI provider configured for model ${config.model}.` : 'AI provider not configured. Add server-side settings to .env.');
+      const config = resolveConfig();
+      console.log(config.configured
+        ? `AI provider configured (${config.source === 'room' ? 'API Room' : '.env'}) for model ${config.model}.`
+        : 'AI provider not configured. Open the API Room in the browser, or add settings to .env.');
     });
   }
 }
@@ -389,5 +586,12 @@ module.exports = {
   loadDotEnv,
   normalizeProviderContent,
   parseChatMessages,
-  parseDotEnv
+  parseDotEnv,
+  readStoredSettings,
+  writeStoredSettings,
+  clearStoredSettings,
+  resolveConfig,
+  detectProvider,
+  SETTINGS_FILE,
+  STORAGE_DIR
 };

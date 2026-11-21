@@ -10,3 +10,6 @@ coverage/
 
 # LangGraph (if used later)
 .langgraph_api/
+
+# API Room: runtime provider keys (never commit)
+storage/

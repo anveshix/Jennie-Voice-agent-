@@ -277,7 +277,7 @@
               </div>
               <div class="field-row">
                 <button type="button" id="btnSaveDocEdit" class="btn btn--primary" style="flex:1">Save draft</button>
-                <button type="button" id="btnSpeakActiveDoc" class="btn"><svg id="muteIcon" class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 9.5h3.2L12 5.5v13L7.2 14.5H4z" stroke-linejoin="round"/><path d="M16 9a4.2 4.2 0 0 1 0 6M18.6 6.6a8 8 0 0 1 0 10.8" stroke-linecap="round"/></svg>Read aloud</button>
+                <button type="button" id="btnSpeakActiveDoc" class="btn"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 9.5h3.2L12 5.5v13L7.2 14.5H4z" stroke-linejoin="round"/><path d="M16 9a4.2 4.2 0 0 1 0 6M18.6 6.6a8 8 0 0 1 0 10.8" stroke-linecap="round"/></svg>Read aloud</button>
               </div>
             </div>
           </div>
@@ -325,27 +325,106 @@
       <div id="drawer-ai-setup" class="drawer drawer-panel">
         <div class="drawer__head">
           <div>
-            <h2>AI setup &amp; privacy</h2>
-            <p class="drawer__sub">Provider credentials live on the Node server, never in this page.</p>
+            <h2>API Room</h2>
+            <p class="drawer__sub">Apni AI key yahan daalo — browser me kabhi store nahi hoti, sirf server ki file me.</p>
           </div>
           <span id="setupProviderBadge" class="tag">Checking setup…</span>
         </div>
-        <div class="drawer__body">
-          <ol class="steps">
-            <li>Copy <code>.env.example</code> to <code>.env</code> in the project folder.</li>
-            <li>Set <code>AI_API_KEY</code> and <code>AI_MODEL</code> for your OpenAI-compatible provider.</li>
-            <li>Run <code>npm start</code> and open <code>http://localhost:3000</code>.</li>
-          </ol>
 
-          <div class="notice">
-            Do not expose this server publicly without authentication and HTTPS.
-            A billable API key on an open server can be misused.
+        <div class="drawer__body">
+          <!-- current state -->
+          <div class="room-status" id="roomStatus">
+            <div class="room-status__row">
+              <span class="room-status__label">Active provider</span>
+              <span class="room-status__value" id="roomProvider">—</span>
+            </div>
+            <div class="room-status__row">
+              <span class="room-status__label">Chat model</span>
+              <span class="room-status__value mono" id="roomModelStatus">—</span>
+            </div>
+            <div class="room-status__row">
+              <span class="room-status__label">Voice transcription</span>
+              <span class="room-status__value" id="roomTranscription">—</span>
+            </div>
+            <div class="room-status__row">
+              <span class="room-status__label">Key source</span>
+              <span class="room-status__value" id="roomKeySource">—</span>
+            </div>
           </div>
+
+          <!-- form -->
+          <form id="roomForm" class="room-form" autocomplete="off">
+            <div class="preset-row" id="presetRow" role="group" aria-label="Provider presets">
+              <button type="button" class="preset" data-provider="openai">OpenAI</button>
+              <button type="button" class="preset" data-provider="groq">Groq</button>
+              <button type="button" class="preset" data-provider="gemini">Gemini</button>
+              <button type="button" class="preset" data-provider="openrouter">OpenRouter</button>
+              <button type="button" class="preset" data-provider="ollama">Ollama</button>
+              <button type="button" class="preset" data-provider="custom">Custom</button>
+            </div>
+            <p class="preset-note" id="presetNote">Ek provider chuno, phir sirf API key paste karo.</p>
+
+            <label class="label" for="roomBaseUrl">Base URL</label>
+            <input class="field mono" id="roomBaseUrl" name="baseUrl" spellcheck="false" placeholder="https://api.openai.com/v1">
+
+            <label class="label" for="roomApiKey">API key</label>
+            <div class="key-row">
+              <input class="field mono" id="roomApiKey" name="apiKey" type="password" spellcheck="false" autocomplete="new-password" placeholder="sk-... (paste here)">
+              <button type="button" id="btnToggleKey" class="btn btn--small" aria-label="Show or hide the key"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke-linejoin="round"/><circle cx="12" cy="12" r="3.2"/></svg></button>
+            </div>
+            <p class="field-hint" id="keyHint">Key sirf is computer se save hoti hai. Mobile par app use kar sakta hai, key badal nahi sakta.</p>
+
+            <div class="field-row">
+              <div class="field-col">
+                <label class="label" for="roomModel">Chat model</label>
+                <input class="field mono" id="roomModel" name="model" spellcheck="false" placeholder="gpt-4o-mini">
+              </div>
+              <div class="field-col">
+                <label class="label" for="roomTranscriptionModel">Voice model <span class="label__hint">(optional)</span></label>
+                <input class="field mono" id="roomTranscriptionModel" name="transcriptionModel" spellcheck="false" placeholder="whisper-1">
+              </div>
+            </div>
+
+            <div class="room-actions">
+              <button type="submit" id="btnSaveRoom" class="btn btn--primary">Save settings</button>
+              <button type="button" id="btnTestRoom" class="btn">Test connection</button>
+              <button type="button" id="btnClearRoom" class="btn btn--ghost">Remove saved key</button>
+            </div>
+
+            <p class="room-result" id="roomResult" role="status" aria-live="polite"></p>
+          </form>
+
+          <!-- device readiness: what works on this phone/browser -->
+          <div class="readiness">
+            <h3 class="readiness__title">Is device par kya chalega</h3>
+            <ul class="checklist" id="readinessList">
+              <li data-check="secure"><span class="check-dot"></span><span class="check-text">Checking…</span></li>
+              <li data-check="mic"><span class="check-dot"></span><span class="check-text">Microphone</span></li>
+              <li data-check="speech"><span class="check-dot"></span><span class="check-text">Browser speech recognition</span></li>
+              <li data-check="tts"><span class="check-dot"></span><span class="check-text">Spoken replies</span></li>
+              <li data-check="pwa"><span class="check-dot"></span><span class="check-text">Installable app</span></li>
+              <li data-check="server"><span class="check-dot"></span><span class="check-text">Server reachable</span></li>
+            </ul>
+            <p class="field-hint" id="installHint">iPhone: Safari → Share → Add to Home Screen. Android: Chrome → ⋮ → Install app.</p>
+          </div>
+
+          <!-- do / don't -->
+          <div class="notice">
+            <strong>Safe raho:</strong> yeh server bina login ke hai. Ise internet par public mat karo —
+            sirf apne computer ya ghar ke Wi-Fi par chalao. Key ko git me kabhi commit mat karo.
+          </div>
+
+          <details class="room-help">
+            <summary>.env se kaise alag hai?</summary>
+            <div class="prose">
+              <p><strong>API Room</strong> — yahan save ki hui key <code>storage/settings.json</code> me jaati hai (git-ignored, chmod 600) aur turant lag jaati hai, restart ki zarurat nahi.</p>
+              <p><strong>.env</strong> — traditional tareeqa, server start hote hi padha jaata hai. Dono me se jo API Room me saved hai wahi pehle chalta hai.</p>
+            </div>
+          </details>
 
           <div class="prose">
             <p><strong>What leaves this browser:</strong> your message text and the recent turns of this chat go to the configured AI provider. Jenni’s server does not store chat history.</p>
             <p><strong>What stays local:</strong> drafts, tasks, notes and the PIN. They are not attached to a request automatically.</p>
-            <p><strong>Voice:</strong> browser speech recognition may use your browser’s speech service. If a recording fallback is used, its audio goes to the configured transcription provider.</p>
             <p><strong>Not connected:</strong> Google Drive, email and any remote sending. Saving a reply creates a local draft only. The PIN is convenience, not account security.</p>
           </div>
         </div>
@@ -373,6 +452,7 @@
 
   <div id="toastBox" class="toast" role="status" aria-live="polite"></div>
 
+  <script src="./public/providers.js" defer></script>
   <script src="./public/app.js" defer></script>
 </body>
 </html>

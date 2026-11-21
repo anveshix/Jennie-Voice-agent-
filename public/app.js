@@ -115,9 +115,11 @@
       } else {
         setAIStatus('setup', 'AI not configured — add a key in .env');
       }
+      updateReadiness();
       return health;
     } catch (error) {
       state.serverReachable = false;
+      updateReadiness();
       state.aiConfigured = false;
       state.transcriptionConfigured = false;
       setAIStatus('offline', 'Server offline — run npm start');
@@ -806,6 +808,253 @@
     run();
   }
 
+
+  /* ------------------------------------------------------------- API Room */
+
+  function providersApi() {
+    return window.JENNI_PROVIDERS || null;
+  }
+
+  function setRoomResult(text, kind) {
+    const el = $('roomResult');
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = `room-result${kind ? ` is-${kind}` : ''}`;
+  }
+
+  function setRoomField(id, value) {
+    const el = $(id);
+    if (el && value !== undefined && value !== null) el.value = value;
+  }
+
+  function pickPreset(name) {
+    const api = providersApi();
+    if (!api) return;
+    const preset = api.PRESETS[name];
+    if (!preset) return;
+    document.querySelectorAll('#presetRow .preset').forEach((btn) => {
+      btn.setAttribute('aria-pressed', btn.getAttribute('data-provider') === name ? 'true' : 'false');
+    });
+    setRoomField('roomBaseUrl', preset.baseUrl);
+    setRoomField('roomModel', preset.model);
+    setRoomField('roomTranscriptionModel', preset.transcriptionModel);
+    const note = $('presetNote');
+    if (note) {
+      note.textContent = preset.note + (preset.keyUrl ? ` Key: ${preset.keyUrl}` : '');
+    }
+    const key = $('roomApiKey');
+    if (key) key.placeholder = name === 'ollama' ? 'not needed for a local model' : 'paste your key here';
+    state.roomPreset = name;
+  }
+
+  function fillRoomStatus(info) {
+    const set = (id, text, kind) => {
+      const el = $(id);
+      if (!el) return;
+      el.textContent = text;
+      el.className = `room-status__value${kind ? ` is-${kind}` : ''}${id === 'roomModelStatus' ? ' mono' : ''}`;
+    };
+    if (!info) {
+      set('roomProvider', 'Server not reachable', 'off');
+      set('roomModelStatus', '—', 'off');
+      set('roomTranscription', '—', 'off');
+      set('roomKeySource', '—', 'off');
+      return;
+    }
+    const api = providersApi();
+    const preset = api && api.PRESETS[info.provider];
+    set('roomProvider', preset ? preset.label : (info.provider || 'custom'), info.configured ? 'ok' : 'warn');
+    set('roomModelStatus', info.model || '—', info.configured ? 'ok' : 'warn');
+    set('roomTranscription', info.transcriptionConfigured
+      ? `on · ${info.transcriptionModel}`
+      : (info.isLocal ? 'local model — off' : 'off (browser speech only)'), info.transcriptionConfigured ? 'ok' : 'warn');
+    set('roomKeySource', info.keySet
+      ? (info.source === 'room' ? 'API Room (saved here)' : '.env file')
+      : (info.isLocal ? 'not needed (local)' : 'missing'), info.keySet || info.isLocal ? 'ok' : 'off');
+
+    const badge = $('setupProviderBadge');
+    if (badge) badge.textContent = info.configured ? 'Configured' : 'Setup required';
+  }
+
+  function syncPresetRow(provider) {
+    const name = providersApi() && providersApi().PRESETS[provider] ? provider : 'custom';
+    state.roomPreset = name;
+    document.querySelectorAll('#presetRow .preset').forEach((btn) => {
+      btn.setAttribute('aria-pressed', btn.getAttribute('data-provider') === name ? 'true' : 'false');
+    });
+    const preset = providersApi() ? providersApi().PRESETS[name] : null;
+    const note = $('presetNote');
+    if (preset && note) {
+      note.textContent = `${preset.label}: ${preset.note}${preset.keyUrl ? ` · Key: ${preset.keyUrl}` : ''}`;
+    }
+  }
+
+  /** Fill the form with the effective settings; the key is never sent back. */
+  function hydrateRoomForm(info) {
+    if (!info) return;
+    const base = $('roomBaseUrl');
+    const model = $('roomModel');
+    const voice = $('roomTranscriptionModel');
+    if (base) base.value = info.baseUrl || '';
+    if (model) model.value = info.model || '';
+    if (voice) voice.value = info.transcriptionModel || '';
+    const key = $('roomApiKey');
+    if (key) {
+      key.value = '';
+      key.placeholder = info.keySet
+        ? 'saved — leave empty to keep it'
+        : (info.isLocal ? 'not needed for a local model' : 'paste your key here');
+    }
+  }
+
+  async function loadRoomSettings(quiet) {
+    try {
+      const response = await fetch('/api/settings', { cache: 'no-store', headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error('settings unavailable');
+      const info = await response.json();
+      state.roomInfo = info;
+      fillRoomStatus(info);
+      syncPresetRow(info.provider);
+      hydrateRoomForm(info);
+      return info;
+    } catch (error) {
+      fillRoomStatus(null);
+      if (!quiet) setRoomResult('Server se settings nahi mili. `npm start` chal raha hai?', 'error');
+      return null;
+    }
+  }
+
+  async function saveRoomSettings() {
+    const api = providersApi();
+    if (!api) { setRoomResult('Provider list load nahi hui — page refresh karo.', 'error'); return; }
+    const payload = {
+      baseUrl: $('roomBaseUrl')?.value || '',
+      model: $('roomModel')?.value || '',
+      transcriptionModel: $('roomTranscriptionModel')?.value || '',
+      apiKey: $('roomApiKey')?.value || '',
+      keepKey: !($('roomApiKey')?.value || ''),
+      provider: state.roomPreset || 'custom'
+    };
+
+    const check = api.validateSettings(payload, { keepKey: payload.keepKey && Boolean(state.roomInfo && state.roomInfo.keySet) });
+    if (!check.valid) {
+      setRoomResult(check.errors[0], 'error');
+      return;
+    }
+
+    setRoomResult('Saving…', 'busy');
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.error?.message || `Save failed (HTTP ${response.status}).`);
+      }
+      const key = $('roomApiKey');
+      if (key) key.value = '';
+      setRoomResult('Saved. Ab chat aur voice dono is provider se chalenge.', 'ok');
+      ['roomBaseUrl', 'roomModel', 'roomTranscriptionModel'].forEach((id) => { const el = $(id); if (el) el.value = ''; });
+      await loadRoomSettings(true);
+      await refreshAIHealth();
+      updateReadiness();
+      showToast('Provider settings saved.');
+    } catch (error) {
+      setRoomResult(error.message, 'error');
+    }
+  }
+
+  async function testRoomConnection() {
+    setRoomResult('Testing the provider…', 'busy');
+    try {
+      const response = await fetch('/api/settings/test', { method: 'POST', headers: { Accept: 'application/json' } });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error?.message || `Test failed (HTTP ${response.status}).`);
+      if (body.ok) {
+        const voice = body.transcriptionConfigured ? 'voice transcription ready' : 'voice transcription off (browser speech still works)';
+        setRoomResult(`Working — ${body.model} replied in ${body.ms} ms; ${voice}.`, 'ok');
+      } else {
+        setRoomResult(`Failed: ${body.message}`, 'error');
+      }
+    } catch (error) {
+      setRoomResult(error.message, 'error');
+    }
+  }
+
+  async function clearRoomSettings() {
+    setRoomResult('Removing…', 'busy');
+    try {
+      const response = await fetch('/api/settings', { method: 'DELETE', headers: { Accept: 'application/json' } });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error?.message || 'Could not remove the saved key.');
+      setRoomResult(body.cleared ? 'Saved key hata di. .env wali settings (agar hai) ab chalegi.' : 'Koi saved key nahi thi.', 'ok');
+      await loadRoomSettings(true);
+      await refreshAIHealth();
+      updateReadiness();
+    } catch (error) {
+      setRoomResult(error.message, 'error');
+    }
+  }
+
+  function setCheck(name, stateName, text) {
+    const li = document.querySelector(`#readinessList li[data-check="${name}"]`);
+    if (!li) return;
+    li.setAttribute('data-state', stateName);
+    const t = li.querySelector('.check-text');
+    if (t && text) t.textContent = text;
+  }
+
+  function updateReadiness() {
+    const secure = window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    setCheck('secure', secure ? 'ok' : 'off',
+      secure ? 'Secure context (mic allowed)' : 'Not secure — mic needs https or localhost');
+
+    const mic = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    setCheck('mic', mic ? 'ok' : 'off', mic ? 'Microphone API available' : 'No microphone API in this browser');
+
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    setCheck('speech', SR ? 'ok' : 'warn', SR ? 'Browser speech recognition available' : 'Not in this browser — tap-to-record fallback');
+
+    const tts = 'speechSynthesis' in window;
+    setCheck('tts', tts ? 'ok' : 'warn', tts ? 'Spoken replies available' : 'No speech synthesis');
+
+    const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    setCheck('pwa', standalone ? 'ok' : 'warn', standalone ? 'Running as an installed app' : 'Browser tab — install available from the menu');
+
+    setCheck('server', state.serverReachable ? 'ok' : 'off', state.serverReachable ? 'Server reachable' : 'Server not reachable — run npm start');
+  }
+
+  function bindRoomEvents() {
+    document.querySelectorAll('#presetRow .preset').forEach((btn) => {
+      btn.addEventListener('click', () => pickPreset(btn.getAttribute('data-provider')));
+    });
+
+    $('roomForm')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      saveRoomSettings();
+    });
+
+    $('btnTestRoom')?.addEventListener('click', testRoomConnection);
+    $('btnClearRoom')?.addEventListener('click', clearRoomSettings);
+
+    $('btnToggleKey')?.addEventListener('click', () => {
+      const input = $('roomApiKey');
+      if (!input) return;
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      $('btnToggleKey').setAttribute('aria-label', show ? 'Hide the key' : 'Show the key');
+    });
+
+    // open the room straight from the status pill too
+    $('aiStatusPill')?.addEventListener('click', () => {
+      openDrawer('drawer-ai-setup');
+      loadRoomSettings(true);
+      updateReadiness();
+    });
+  }
+
   function setComposerBusy(busy) {
     const input = $('botCommandInput');
     const button = $('botSendButton');
@@ -1235,7 +1484,6 @@
       });
     });
 
-    $('aiStatusPill')?.addEventListener('click', () => openDrawer('drawer-ai-setup'));
 
     document.querySelectorAll('.quick-chip').forEach((chip) => {
       chip.addEventListener('click', () => handleUserCommand(chip.getAttribute('data-quick')));
@@ -1372,6 +1620,9 @@
 
     updatePinLockInstructions();
     startAmbientMotion();
+    bindRoomEvents();
+    updateReadiness();
+    loadRoomSettings(true);
     appendMessage('jenni', 'Hi! Ask me anything by typing or tapping the microphone. I use the AI provider configured on this server; drafts, tasks and notes stay in this browser.');
     state.lastGeneratedMarkdown = '';
     refreshAIHealth();

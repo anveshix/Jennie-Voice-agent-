@@ -1782,3 +1782,189 @@ a {
   border-left: 2px solid rgba(46, 230, 168, 0.28);
   margin: 3px 0;
 }
+
+/* ================================================================ API ROOM */
+.room-status {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--line);
+}
+
+.room-status__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  background: rgba(8, 12, 19, 0.9);
+  font-size: 11.5px;
+}
+
+.room-status__label { color: var(--faint); }
+
+.room-status__value {
+  color: #dbe7f5;
+  font-weight: 500;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.room-status__value.is-ok { color: #8bf5cd; }
+.room-status__value.is-warn { color: #f8d6a3; }
+.room-status__value.is-off { color: #ffb3bf; }
+
+.room-form {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(4, 7, 12, 0.45);
+}
+
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.preset {
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  transition: color 0.18s, border-color 0.18s, background 0.18s, transform 0.18s var(--ease-out);
+}
+
+.preset:hover { color: var(--text); border-color: var(--line-strong); transform: translateY(-1px); }
+
+.preset[aria-pressed="true"] {
+  border-color: rgba(46, 230, 168, 0.5);
+  background: rgba(46, 230, 168, 0.14);
+  color: #9ff6d8;
+}
+
+.preset-note {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.key-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.key-row .field { flex: 1; min-width: 0; }
+
+.key-row .btn { flex: 0 0 auto; padding-inline: 11px; }
+
+.field-hint {
+  margin: -2px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.field-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.field-col { flex: 1 1 160px; display: grid; gap: 5px; min-width: 0; }
+.field-col .field { width: 100%; }
+.label__hint { color: #55647a; text-transform: none; letter-spacing: 0; }
+
+.room-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.room-result {
+  margin: 2px 0 0;
+  min-height: 1.1em;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.room-result.is-ok { color: #8bf5cd; }
+.room-result.is-error { color: #ffb3bf; }
+.room-result.is-busy { color: #9fe4fb; }
+
+/* readiness checklist */
+.readiness {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.readiness__title {
+  margin: 0 0 9px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.checklist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+
+.checklist li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.check-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #44536b;
+}
+
+.checklist li[data-state="ok"] .check-dot { background: var(--mint); box-shadow: 0 0 8px rgba(46, 230, 168, 0.8); }
+.checklist li[data-state="ok"] .check-text { color: #bfe9d8; }
+.checklist li[data-state="warn"] .check-dot { background: var(--amber); }
+.checklist li[data-state="warn"] .check-text { color: #f3dcb6; }
+.checklist li[data-state="off"] .check-dot { background: var(--rose); }
+.checklist li[data-state="off"] .check-text { color: #ffc4cc; }
+
+.room-help {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.room-help summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: #cfe0f2;
+}
+
+.room-help[open] summary { margin-bottom: 8px; }
+
+@media (max-width: 620px) {
+  .room-form { padding: 12px; }
+  .room-actions .btn { flex: 1 1 100%; }
+  .room-status__row { font-size: 11px; padding: 8px 10px; }
+}
