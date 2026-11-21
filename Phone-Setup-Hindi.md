@@ -95,6 +95,52 @@ Phone पर git clone / npm install नहीं हो सकता — ये
 - हर repo पर 3 request जाती हैं (info + README + files), इसलिए घंटे में ~20 repo आराम से।
 - कुछ भी install या run नहीं होता — सिर्फ़ पढ़ना।
 
+### 🧠 Yaad rakhna — memory (Setup → Memory)
+
+Jenni अब **तुम्हें याद रखती है**। एक बार बोल दो, हमेशा के लिए:
+
+> "mera naam Aarav hai, Patna me rehta hoon, class 12 me padhta hoon"
+
+अगली बार app खोलो, बिना दोबारा बताये वो जानती है। जो याद रखती है उसे सिर्फ़ तब बोलती है जब बात में काम आए — list पढ़ कर नहीं सुनाती।
+
+| क्या याद रहता है | उदाहरण |
+|---|---|
+| नाम, उम्र | "mera naam Aarav hai", "main 17 saal ka hoon" |
+| शहर | "Patna me rehta hoon" |
+| पढ़ाई | "class 12 me hoon", "JEE ki tayyari" |
+| लक्ष्य | "IAS banna hai" |
+| पसंद/नापसंद | "mujhe coffee pasand hai", "mujhe shor pasand nahi" |
+| भाषा | "mujhe Hindi me jawab do" |
+
+- **कहाँ दिखता है:** Setup → Memory में पूरी list, हर fact के साथ कितना भरोसा (%) है।
+- **भूलना:** `Refresh` से list नया होती है, `Sab bhool jao` से सब मिट जाता है (confirm पूछती है)।
+- **कहाँ रहता है:** सिर्फ़ तुम्हारे phone के browser में (localStorage), किसी server पर नहीं। `Erase everything` पर memory भी चली जाती है।
+- **सीमा:** 120 facts. भर जाएँ तो सबसे कम काम की बातें खुद-ब-खुद छँट जाती हैं (पुरानी और कम भरोसे वाली पहले)।
+
+### 🎯 Skills — जो एक बार सही किया, दोबारा सीखना नहीं (Setup → Skills)
+
+जब Jenni किसी सवाल का **step-by-step काम का जवाब** देती है, तो वो तरीक़ा सेव हो जाता है और अगली बार उसी से शुरू करती है। ये Hermes Agent वाला तरीक़ा है — सीखना, याद रखना, फिर सुधारना।
+
+**शुरू से मौजूद 7 playbook:**
+
+| Playbook | कब लगता है |
+|---|---|
+| Leave application | school/college से छुट्टी की application |
+| Study plan | "kaise padhun", exam की तैयारी का plan |
+| Email likhna | कोई भी formal email |
+| Code help | code का error, कोई function लिखना |
+| Mood support | तनाव, उदासी, "mann nahi lag raha" |
+| Summarise | लंबा text छोटा करना |
+| Daily plan | "aaj ka plan banao" |
+
+- तुम्हारी सीखी हुई skills पर **v1, v2, v3** version लगता है — जितनी बार सुधरेगी, version बढ़ेगा।
+- Setup → Skills में built-in और तुमसे सीखी हुई — दोनों दिखती हैं।
+- कुल 40 skills तक रहती हैं; सबसे पुरानी अपने आप हट जाती हैं।
+
+### 🔁 गलती खुद पकड़ना
+
+लंबे/plan जैसे सवाल पर अगर Jenni का जवाब बहुत छोटा है, या वो file बनाने से मना कर देती है — तो वो **खुद जाँच करके** दोबारा बेहतर जवाब लिखती है (एक ही extra step, बिना तुम्हें कुछ बताये)। "namaste" जैसी छोटी बात पर ये नहीं होता — वहाँ एक line ही सही जवाब है, दूसरी call बर्बाद नहीं होती।
+
 **जान-बूझकर सीमा:** ये personality prompt से बनती है, कोई अलग fine-tuned model नहीं — इसलिए provider बदलो तो भी वही Jenni रहती है। Key, OTP, password कभी नहीं माँगती; medical/legal/paisa वाले सवाल पर "doctor/lawyer से confirm करो" बोलती है।
 
 ---

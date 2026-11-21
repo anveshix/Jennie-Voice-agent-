@@ -169,6 +169,7 @@ async function boot(options = {}) {
   window.eval(fs.readFileSync(path.join(ROOT, 'security.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'docs.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'github.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'agent.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'));
   await wait(180);
 
@@ -743,6 +744,99 @@ function submit(window, text) {
   b.$('btnVoice').click();
   await wait(150);
   b.dom.window.close();
+
+  /* ── agent core: memory, skills, self-check ───────────────────────────── */
+
+  /* the pure core, tested without a browser */
+  const A = require(path.join(ROOT, 'agent.js'));
+
+  /* 1. a fact said once is remembered, survives a reload, and reaches the prompt */
+  b = await boot({ script: ['Yaad rakh liya.', 'Theek hai.'] });
+  submit(b.window, 'mera naam Aarav hai');
+  await wait(700);
+  const storedFacts = JSON.parse(b.window.localStorage.getItem('jenni_memory_v1') || '[]');
+  ok(storedFacts.some((f) => /aarav/i.test(f.text)), 'a name is stored as a fact', storedFacts.map((f) => f.text).join(';'));
+
+  /* it shows in the Setup panel … */
+  b.$('memoryList').dataset.x = '';
+  b.window.document.querySelector('[data-tab="setup"]').click();
+  await wait(120);
+  const panelText = b.$('memoryList').textContent;
+  ok(/aarav/i.test(panelText), 'the Memory panel shows the fact', panelText.slice(0, 80));
+
+  /* … and it comes back after a reload, inside the system prompt */
+  const remembered = b.window.localStorage.getItem('jenni_memory_v1');
+  b.dom.window.close();
+  b = await boot({ seed: { jenni_memory_v1: remembered }, script: ['Haan, Aarav.', 'Theek hai.'] });
+  submit(b.window, 'mujhe kya naam se bulana chahiye');
+  await wait(700);
+  const memoryBody = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body);
+  const systemText = memoryBody.messages[0].content;
+  const systemText0 = systemText;
+  ok(/Aarav/i.test(systemText), 'the remembered fact is sent in the system prompt', systemText.slice(-120));
+
+  /* "Sab bhool jao" really empties it */
+  b.window.confirm = () => true;
+  b.$('btnMemoryClear').click();
+  await wait(120);
+  const afterWipe = JSON.parse(b.window.localStorage.getItem('jenni_memory_v1') || '[]');
+  ok(afterWipe.length === 0, '“Sab bhool jao” empties the memory', String(afterWipe.length));
+  ok(!/aarav/i.test(b.$('memoryList').textContent), 'the emptied panel clears too');
+  b.dom.window.close();
+
+  /* 2. a leave request carries the learned playbook, not just the question */
+  b = await boot({ script: ['Ye raha draft.', 'Theek hai.'] });
+  submit(b.window, 'leave application likhni hai');
+  await wait(700);
+  const leaveBody = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body);
+  const leaveSystem = leaveBody.messages[0].content;
+  ok(/Leave-application|leave application/i.test(leaveSystem), 'the leave playbook is injected', leaveSystem.slice(-140));
+  ok(/date|reason|principal|class/i.test(leaveSystem), 'the playbook carries real steps');
+  b.dom.window.close();
+
+  /* 3. a thin answer to a plan question triggers one self-check call, then improves */
+  b = await boot({ script: ['haan', 'Pehle syllabus 4 hisson me baanto, phir roz 2 ghante padho aur har Sunday test do.', 'Theek hai.'] });
+  submit(b.window, 'study plan kaise banaun');
+  await wait(900);
+  const planCalls = b.calls.filter((c) => c.url.includes('chat/completions'));
+  ok(planCalls.length >= 2, 'a thin plan answer is re-asked once', String(planCalls.length));
+  const finalBubble = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
+  ok(finalBubble.includes('syllabus'), 'the better second answer is the one shown', finalBubble.slice(0, 80));
+  b.dom.window.close();
+
+  /* 4. a greeting stays one call — no wasted second round-trip */
+  b = await boot({ script: ['Namaste! Batao kya karna hai.'] });
+  submit(b.window, 'namaste');
+  await wait(700);
+  ok(b.calls.filter((c) => c.url.includes('chat/completions')).length === 1, 'a greeting is answered in one call');
+  b.dom.window.close();
+
+  /* 4b. the persona is pointed at 2026-27 → 2030, not stale knowledge */
+  ok(/2027-2030/.test(systemText0), 'the prompt asks for 2026-27 to 2030 thinking');
+
+  /* 5. the core's own units */
+  ok(A.critiqueAnswer('haan', 'study plan banao').ok === false, 'critique: a bare “haan” is too thin');
+  ok(A.critiqueAnswer('Theek hai.', 'namaste').ok === true, 'critique: a short greeting reply is fine');
+  ok(A.critiqueAnswer('Main file nahi bana sakti.', 'leave application file banao').ok === false, 'critique: a refusal is caught');
+  ok(A.critiqueAnswer('Kal subah 6 baje utho, 2 ghante padho aur raat ko 30 min revision karo.', 'kaise padhun').ok === true, 'critique: a real plan passes');
+
+  /* skills are learned, versioned and matched */
+  const store = { data: {}, getItem(k) { return this.data[k] || null; }, setItem(k, v) { this.data[k] = v; }, removeItem(k) { delete this.data[k]; } };
+  const skills = A.createSkills(store);
+  ok(skills.match('leave application likhni hai').length > 0, 'a leave request matches its playbook');
+  ok(skills.match('aaj mausam kaisa hai').length === 0, 'an unrelated question matches nothing');
+  const v1 = skills.learn({ name: 'leave application', steps: ['step one', 'step two'] });
+  const v2 = skills.learn({ name: 'leave application', steps: ['step one', 'step two', 'step three'] });
+  ok(v1 && v1.version === 1, 'a new skill starts at v1', String(v1 && v1.version));
+  ok(v2 && v2.version === 2 && v2.steps.length === 3, 're-learning the same skill bumps the version', JSON.stringify(v2 && v2.version));
+  ok(skills.all().filter((s) => s.source === 'learned').length === 1, 'a learned skill replaces, never duplicates');
+
+  /* memory recall prefers relevance and drops duplicates */
+  const mem = A.createMemory(store);
+  mem.observe('mera naam Aarav hai');
+  mem.observe('mera naam Aarav hai');
+  ok(mem.all().filter((f) => /aarav/i.test(f.text)).length === 1, 'a repeated fact is not duplicated');
+  ok(mem.recall('mera naam kya hai')[0].text.includes('Aarav'), 'recall ranks the relevant fact first');
 
   /* ── failures stay readable ────────────────────────────────────────────── */
   b = await boot({ fail: true });

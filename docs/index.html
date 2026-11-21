@@ -392,7 +392,20 @@
     </div>
     <p class="field-hint">Mic khud khulta hai. Rukna ho to mic ya <em>Chup</em>. iPhone me har message par mic dabana pad sakta hai.</p>
 
-    <h3 class="sheet__sub">4. Bot</h3>
+    <h3 class="sheet__sub">4. Memory</h3>
+    <div class="status" id="memoryStatus"><span class="status__dot"></span><span id="memoryStatusText">Kuch yaad nahi</span></div>
+    <div class="stack stack--tight" id="memoryList"></div>
+    <div class="row row--wrap">
+      <button class="btn btn--small" type="button" id="btnMemoryRefresh">Refresh</button>
+      <button class="btn btn--small btn--danger" type="button" id="btnMemoryClear">Sab bhool jao</button>
+    </div>
+    <p class="field-hint">Jenni sirf wahi yaad rakhti hai jo tum khud batao — naam, sheher, padhai, pasand. Sab is phone me, key ki tarah.</p>
+
+    <h3 class="sheet__sub">5. Skills</h3>
+    <p class="field-hint" id="skillsSummary">—</p>
+    <div class="stack stack--tight" id="skillList"></div>
+
+    <h3 class="sheet__sub">6. Bot</h3>
     <label class="toggle-row" for="botToggle">
       <span>
         <strong>Screen par floating bot</strong>
@@ -402,7 +415,7 @@
     </label>
     <p class="field-hint">Pakad kar khincho — kinare se chipak jayega. Tap = bolo.</p>
 
-    <h3 class="sheet__sub">5. Backup</h3>
+    <h3 class="sheet__sub">7. Backup</h3>
     <div class="row row--wrap">
       <button class="btn btn--small" type="button" id="btnExport">Export data</button>
       <button class="btn btn--small" type="button" id="btnImport">Import data</button>
@@ -447,6 +460,7 @@
 <script src="./security.js"></script>
 <script src="./docs.js"></script>
 <script src="./github.js"></script>
+<script src="./agent.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

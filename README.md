@@ -266,6 +266,26 @@ so it travels with whichever provider you plug in.
   me jawab nahi diya.") and offers **Phir try karo**, which resends the same question — no more stacked
   "Maaf karo…" paragraphs, and failed bubbles are never replayed to the model.
 
+## Memory, skills and self-check (the agent layer)
+
+The phone app borrows what worked in 2026's personal agents and rebuilds it dependency-free
+in the browser (`docs/agent.js`, plain localStorage, no server):
+
+| Borrowed from | What it became here |
+|---|---|
+| mem0 / Graphiti | **Fact memory** — name, city, age, studies, goals, likes, language. Each fact carries confidence, a hit count and a timestamp; recall scores relevance + freshness, so a stale low-value fact sinks. `MAX_FACTS = 120` with compaction. |
+| Hermes Agent | **Learned, versioned skills** — 7 built-in playbooks (leave application, study plan, email, code help, mood support, summarise, daily plan) plus procedures learned from real answers, each with `version` bumped on re-learning (`MAX_SKILLS = 40`). |
+| deep-agents | **Plan → act → reflect with a budget** — an answer that is empty, too thin for a plan-shaped question, or a refusal to make a file gets exactly one improved second pass, then stops. |
+| OpenClaw / MCP | **Tool registry with permissions** — handlers are registered with a permission level; nothing gets shell, filesystem or network access beyond the app's own allowlist. |
+
+- **Memory** lives in Setup → Memory: every fact with its confidence, plus **Refresh** and
+  **Sab bhool jao**. It is injected into the system prompt only when relevant — never recited as a list.
+- **Skills** live in Setup → Skills, showing built-in and learned procedures separately.
+- Both are `jenni_memory_v1` / `jenni_skills_v1` in localStorage: gone on **Erase everything**,
+  never sent anywhere except as prompt context to your own provider.
+- **Small talk is not "fixed".** A greeting answered in one line stays one call — the reflect pass is
+  skipped for it, so the extra round-trip only buys something on real questions.
+
 ## Privacy and limits
 
 - Each chat request sends the user's message and recent turns from the current tab to the configured AI provider. The conversation stays in tab memory only; it is not written to the app's server or browser storage.
