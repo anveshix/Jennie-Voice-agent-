@@ -337,8 +337,9 @@ function createAppServer({ env = process.env } = {}) {
   const allowConnector = createRateLimiter({ limit: 20, windowMs: 60_000 });
   const connections = createConnections({ storageDir: STORAGE_DIR, requestIsLocal });
   const files = {
-    '/': ['index.html', 'text/html; charset=utf-8'],
-    '/index.html': ['index.html', 'text/html; charset=utf-8'],
+    '/': ['app.html', 'text/html; charset=utf-8'],
+    '/app.html': ['app.html', 'text/html; charset=utf-8'],
+    '/index.html': ['app.html', 'text/html; charset=utf-8'],
     '/public/app.css': ['public/app.css', 'text/css; charset=utf-8'],
     '/public/app.js': ['public/app.js', 'text/javascript; charset=utf-8'],
     '/public/providers.js': ['public/providers.js', 'text/javascript; charset=utf-8'],

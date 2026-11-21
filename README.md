@@ -2,6 +2,29 @@
 
 Jenni is a small browser UI backed by a Node.js server. Typed messages and speech transcripts go to a server-configured, OpenAI-compatible chat provider. Replies are shown in the conversation and read aloud with the browser's speech synthesis. The server does not save chat history.
 
+## No terminal? Use the phone app
+
+If you do not have a laptop with Node.js, you do not need any of the steps above.
+A serverless version lives in `docs/` and runs on GitHub Pages:
+
+**<https://anveshix.github.io/Jennie-Voice-agent-/>**
+
+1. Open the link on your phone (Chrome or Safari).
+2. **Android:** menu → *Add to Home screen*. **iPhone:** Share → *Add to Home screen*.
+3. Paste an API key (Groq and Gemini have free tiers) and press **Save & start**.
+4. Press **Test connection** to prove the key works.
+
+There is no server in that path. The phone calls the provider directly, so the key is
+stored only in that browser and never reaches a Jenni backend. Everything else works the
+same: drafts, voice input, optional spoken replies, and Google Drive upload with
+`drive.file` (client ID only — the authorized JavaScript origin is
+`https://anveshix.github.io`).
+
+Step-by-step Hindi walkthrough: [`Phone-Setup-Hindi.md`](./Phone-Setup-Hindi.md).
+
+The Node app in the repository root is unchanged: `app.html` is the page `npm start`
+serves, and the root `index.html` now only redirects Pages visitors to `docs/`.
+
 ## Run it locally
 
 1. Install Node.js 20 or newer.
