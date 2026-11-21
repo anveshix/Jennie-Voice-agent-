@@ -632,6 +632,7 @@
       foot.textContent = voice.speaking ? 'Bol rahi hoon — rukna ho to 🔇 dabao' : 'Sun rahi hoon… bolo';
     }
     paintTabs();
+    paintBot();
     if (voice.mode) keepAwake();
   }
 
@@ -760,6 +761,7 @@
   }
 
   function paintDrafts() {
+    paintBot();
     const badge = $('draftCount');
     if (badge) {
       badge.hidden = state.drafts.length === 0;
@@ -1255,6 +1257,259 @@
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('is-on', t.dataset.tab === active));
   }
 
+
+  /* ══════════════════════════════════════════════════════════════ FLOATING BOT
+
+     A chat-head style bubble: pointer-events drag, a 6px threshold so a tap
+     is still a tap, spring-to-edge on release, position remembered per device,
+     and a bin that appears while dragging. It mirrors the voice loop, so the
+     app's voice state is visible from any screen.
+     ---------------------------------------------------------------------- */
+
+  const bot = {
+    node: null,
+    side: 'right',
+    y: 62,          // vh
+    dragging: false,
+    moved: false,
+    held: false,
+    startX: 0,
+    startY: 0,
+    offsetY: 0,
+    hidden: false
+  };
+
+  const BOT_KEY = 'jenni_bot_v1';
+
+  function readBotPrefs() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(BOT_KEY) || '{}');
+      if (saved.side === 'left' || saved.side === 'right') bot.side = saved.side;
+      if (Number.isFinite(saved.y)) bot.y = saved.y;
+      bot.hidden = Boolean(saved.hidden);
+    } catch (error) { /* defaults are fine */ }
+  }
+
+  function writeBotPrefs() {
+    try {
+      localStorage.setItem(BOT_KEY, JSON.stringify({ side: bot.side, y: bot.y, hidden: bot.hidden }));
+    } catch (error) { /* private mode */ }
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+  }
+
+  function paintBot() {
+    const node = $('bot');
+    if (!node) return;
+    node.dataset.side = bot.side;
+    const minY = 8;
+    const maxY = 88;
+    node.style.setProperty('--bot-y', clamp(bot.y, minY, maxY).toFixed(2) + 'vh');
+    node.hidden = bot.hidden;
+    const restore = $('botRestore');
+    if (restore) restore.hidden = !bot.hidden;
+
+    const toggle = $('botToggle');
+    if (toggle) toggle.checked = !bot.hidden;
+
+    // the bot is a mirror of the voice loop, wherever you are
+    node.classList.toggle('is-listening', voice.listening);
+    node.classList.toggle('is-speaking', voice.speaking);
+    node.classList.toggle('is-busy', state.busy && !voice.speaking);
+    node.classList.toggle('is-error', Boolean(node.dataset.error));
+
+    const title = $('bot');
+    if (title) title.setAttribute('title', botHint());
+    const body = $('botButton');
+    if (body) body.setAttribute('aria-label', 'Jennie bot — ' + botHint());
+
+    const badge = $('botBadge');
+    if (badge) {
+      const show = state.drafts.length > 0 && !voice.mode;
+      badge.hidden = !show;
+      badge.textContent = String(Math.min(state.drafts.length, 9));
+    }
+  }
+
+  function setBotHidden(hidden, silent) {
+    bot.hidden = hidden;
+    writeBotPrefs();
+    paintBot();
+    if (hidden && voice.mode) stopVoiceMode(true);
+    if (!silent) toast(hidden ? 'Bot chhup gaya — Setup se wapas lao' : 'Bot wapas aa gaya');
+  }
+
+  /* ── drag ──────────────────────────────────────────────────────────────── */
+
+  function onBotPointerDown(event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    const node = $('bot');
+    if (!node) return;
+
+    bot.dragging = true;
+    bot.moved = false;
+    bot.startX = event.clientX;
+    bot.startY = event.clientY;
+    const rect = node.getBoundingClientRect();
+    bot.offsetY = event.clientY - rect.top;
+    bot.node.setPointerCapture && bot.node.setPointerCapture(event.pointerId);
+    node.classList.add('is-grabbing');
+
+    clearTimeout(bot.holdTimer);
+    bot.holdTimer = setTimeout(() => {
+      if (!bot.moved && bot.dragging) {
+        bot.dragging = false;
+        bot.held = true;
+        node.classList.remove('is-grabbing');
+        botLongPress();
+      }
+    }, 520);
+  }
+
+  function onBotPointerMove(event) {
+    if (!bot.dragging) return;
+    const node = $('bot');
+    if (!node) return;
+
+    const dx = event.clientX - bot.startX;
+    const dy = event.clientY - bot.startY;
+
+    // a press only becomes a drag after a few pixels, so taps stay taps
+    if (!bot.moved && Math.hypot(dx, dy) < 6) return;
+    if (!bot.moved) {
+      clearTimeout(bot.holdTimer);
+      bot.moved = true;
+      node.classList.add('is-dragging');
+      const bin = $('botBin');
+      if (bin) bin.hidden = false;
+    }
+
+    event.preventDefault();
+
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const x = clamp(event.clientX, 24, width - 24);
+    const y = clamp(event.clientY, 40, height - 40);
+    bot.side = x < width / 2 ? 'left' : 'right';
+    bot.y = (y / height) * 100;
+
+    node.dataset.side = bot.side;
+    node.style.setProperty('--bot-y', bot.y.toFixed(2) + 'vh');
+
+    const bin = $('botBin');
+    if (bin) bin.classList.toggle('is-hot', overBotBin(event.clientX, event.clientY));
+  }
+
+  function onBotPointerUp(event) {
+    clearTimeout(bot.holdTimer);
+    if (!bot.dragging) return;
+    bot.dragging = false;
+    const node = $('bot');
+    if (node) {
+      node.classList.remove('is-dragging', 'is-grabbing');
+      if (node.releasePointerCapture && event.pointerId !== undefined) {
+        try { node.releasePointerCapture(event.pointerId); } catch (error) { /* ignore */ }
+      }
+    }
+    // ask before hiding the bin — a hidden element has no box to measure
+    const droppedOnBin = bot.moved && overBotBin(event.clientX, event.clientY);
+    const bin = $('botBin');
+    if (bin) {
+      bin.hidden = true;
+      bin.classList.remove('is-hot');
+    }
+
+    if (bot.moved) {
+      bot.moved = false;
+      if (droppedOnBin) { setBotHidden(true); return; }
+      bot.y = clamp(bot.y, 8, 88);
+      writeBotPrefs();
+      paintBot();
+      return;
+    }
+    // a real tap: talk
+    if (!bot.held) toggleVoiceMode();
+    bot.held = false;
+  }
+
+  function overBotBin(x, y) {
+    const bin = $('botBin');
+    if (!bin || bin.hidden) return false;
+    const rect = bin.getBoundingClientRect();
+    return x >= rect.left - 8 && x <= rect.right + 8 && y >= rect.top - 8 && y <= rect.bottom + 8;
+  }
+
+
+  /* The bot is the same everywhere, but it is useful in different ways on
+     different screens: it can save the open draft, upload it, or just talk. */
+  function currentScreen() {
+    if (voice.mode) return 'voice';
+    const open = [...document.querySelectorAll('.sheet')].find((sh) => !sh.hidden);
+    return open ? open.id.replace('sheet-', '') : 'chat';
+  }
+
+  function botHint() {
+    const screen = currentScreen();
+    if (screen === 'voice') return 'Bol rahi hoon… rukna ho to tap karo';
+    if (screen === 'drafts') return state.drafts.length ? `${state.drafts.length} draft — tap karke bolo` : 'Koi draft nahi — tap karke bolo';
+    if (screen === 'drive') return driveReady() ? 'Tap karke bolo, ya Connect Google dabao' : 'Tap karke bolo';
+    if (screen === 'setup') return 'Key set hai — tap karke bolo';
+    if (state.drafts.length) return `${state.drafts.length} draft — tap karke bolo`;
+    return 'Tap karke bolo';
+  }
+
+  /* A long press on the bot offers the actions that fit the current screen. */
+  function botLongPress() {
+    const screen = currentScreen();
+    if (screen === 'drafts' && state.drafts.length) {
+      openSheet('drafts');
+      toast('Draft par Drive / Copy dabao');
+      return;
+    }
+    if (screen === 'drive') {
+      paintDrive();
+      toast(driveReady() ? 'Connect Google dabao' : 'Neeche client ID paste karo');
+      return;
+    }
+    openSheet('setup');
+  }
+
+  function wireBot() {
+    readBotPrefs();
+    bot.node = $('bot');
+    const node = bot.node;
+    if (!node) return;
+
+    paintBot();
+
+    node.addEventListener('pointerdown', onBotPointerDown);
+    window.addEventListener('pointermove', onBotPointerMove, { passive: false });
+    window.addEventListener('pointerup', onBotPointerUp);
+    window.addEventListener('pointercancel', () => {
+      bot.dragging = false;
+      node.classList.remove('is-dragging', 'is-grabbing');
+      const bin = $('botBin');
+      if (bin) bin.hidden = true;
+    });
+
+    $('botBin').addEventListener('click', () => setBotHidden(true));
+    $('botShow').addEventListener('click', () => setBotHidden(false));
+
+    const toggle = $('botToggle');
+    if (toggle) {
+      toggle.checked = !bot.hidden;
+      toggle.addEventListener('change', () => setBotHidden(!toggle.checked, true));
+    }
+
+    // keep the bubble usable after rotation / resize
+    window.addEventListener('resize', () => {
+      bot.y = clamp(bot.y, 8, 88);
+      node.style.setProperty('--bot-y', bot.y.toFixed(2) + 'vh');
+    });
+  }
+
   /* ══════════════════════════════════════════════════════════════ WIRING */
 
   function autoGrow(el) {
@@ -1482,6 +1737,7 @@
     }
     wireGate();
     wireApp();
+    wireBot();
     if (state.cfg && state.cfg.apiKey) {
       // read the destination before showApp() paints the default screen
       const target = routeFromLocation() || localStorage.getItem('jenni_screen') || '';

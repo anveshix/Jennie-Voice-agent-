@@ -260,6 +260,97 @@ function submit(window, text) {
   ok(b.$('sheet-drafts').hidden === false, 'returning visit restores the last screen', b.$('sheet-drafts').hidden);
   b.dom.window.close();
 
+  /* ── floating bot: drag, tap, snap, hide ───────────────────────────────── */
+  b = await boot();
+  const botEl = b.$('bot');
+  ok(botEl !== null, 'floating bot is on the page');
+  ok(botEl.dataset.side === 'right', 'bot starts on the right edge');
+  ok(botEl.querySelector('.bot__face') !== null, 'bot has a face');
+  ok(b.$('botToggle').checked === true, 'settings toggle reflects the bot being visible');
+
+  /* a real drag: move far enough, then release on the left */
+  const pointer = (type, x, y) => {
+    const event = new b.window.Event(type, { bubbles: true, cancelable: true });
+    event.clientX = x; event.clientY = y; event.pointerId = 1; event.button = 0;
+    return event;
+  };
+  b.window.innerWidth = 400;
+  b.window.innerHeight = 800;
+
+  botEl.dispatchEvent(pointer('pointerdown', 340, 500));
+  b.window.dispatchEvent(pointer('pointermove', 330, 495));
+  ok(botEl.dataset.side === 'right', 'a 10px wobble does not count as a drag yet');
+  b.window.dispatchEvent(pointer('pointermove', 60, 300));
+  ok(botEl.classList.contains('is-dragging'), 'dragging starts past the threshold');
+  ok(botEl.dataset.side === 'left', 'bot follows the pointer to the left half');
+  ok(b.$('botBin').hidden === false, 'the hide target appears while dragging');
+  b.window.dispatchEvent(pointer('pointerup', 60, 300));
+  await wait(60);
+  ok(botEl.dataset.side === 'left', 'dropped on the left it snaps to the left edge');
+  ok(botEl.classList.contains('is-dragging') === false, 'drag state clears on release');
+  ok(b.$('botBin').hidden === true, 'the hide target goes away');
+  const savedBot = JSON.parse(b.window.localStorage.getItem('jenni_bot_v1') || '{}');
+  ok(savedBot.side === 'left', 'position is remembered', JSON.stringify(savedBot));
+
+  /* the drag must not also have fired a tap */
+  ok(!botEl.classList.contains('is-listening'), 'finishing a drag does not start voice mode');
+
+  /* a tap starts the voice loop */
+  botEl.dispatchEvent(pointer('pointerdown', 40, 300));
+  b.window.dispatchEvent(pointer('pointerup', 41, 301));
+  await wait(120);
+  ok(b.$('app').classList.contains('is-voice'), 'tapping the bot starts voice mode');
+  ok(botEl.classList.contains('is-listening'), 'bot shows the listening state');
+  ok(b.rec.starts === 1, 'the mic actually opened');
+
+  /* dragging onto the bin hides it */
+  botEl.dispatchEvent(pointer('pointerdown', 40, 300));
+  b.window.dispatchEvent(pointer('pointermove', 45, 310));
+  const binRect = { left: 180, right: 220, top: 280, bottom: 320 };
+  b.$('botBin').getBoundingClientRect = () => binRect;
+  b.window.dispatchEvent(pointer('pointermove', 200, 300));
+  ok(b.$('botBin').classList.contains('is-hot'), 'bin highlights when the bot is over it');
+  b.window.dispatchEvent(pointer('pointerup', 200, 300));
+  await wait(80);
+  ok(botEl.hidden === true, 'dropping on the bin hides the bot');
+  ok(b.$('botRestore').hidden === false, 'a restore chip appears');
+  ok(b.window.localStorage.getItem('jenni_bot_v1').includes('"hidden":true'), 'hidden state is remembered');
+
+  /* restore + settings toggle */
+  b.$('botShow').click();
+  await wait(60);
+  ok(botEl.hidden === false, 'restore brings it back');
+  b.$('botToggle').checked = false;
+  b.$('botToggle').dispatchEvent(new b.window.Event('change'));
+  await wait(60);
+  ok(botEl.hidden === true, 'the settings toggle can hide it too');
+  b.$('botToggle').checked = true;
+  b.$('botToggle').dispatchEvent(new b.window.Event('change'));
+  await wait(60);
+  ok(botEl.hidden === false, 'and bring it back');
+  b.dom.window.close();
+
+  /* the bot mirrors voice state from any screen */
+  b = await boot();
+  b.window.document.querySelector('.tab[data-tab="setup"]').click();
+  await wait(80);
+  b.$('btnVoiceStart').click();
+  await wait(140);
+  ok(b.$('bot').classList.contains('is-listening'), 'bot lights up while the mic is open on another screen');
+  ok(b.$('sheet-setup').hidden === true, 'starting voice closes the sheet');
+  b.dom.window.close();
+
+  /* the bot knows which screen it is on */
+  b = await boot();
+  ok(b.$('bot').getAttribute('title').includes('Tap karke bolo'), 'bot hint on chat', b.$('bot').getAttribute('title'));
+  b.window.document.querySelector('.tab[data-tab="drafts"]').click();
+  await wait(80);
+  ok(b.$('bot').getAttribute('title').includes('draft'), 'bot hint changes on the drafts screen', b.$('bot').getAttribute('title'));
+  b.window.document.querySelector('.tab[data-tab="drive"]').click();
+  await wait(80);
+  ok(b.$('bot').getAttribute('title').includes('Connect') || b.$('bot').getAttribute('title').includes('bolo'), 'bot hint changes on the drive screen', b.$('bot').getAttribute('title'));
+  b.dom.window.close();
+
   /* ── failures stay readable ────────────────────────────────────────────── */
   b = await boot({ fail: true });
   submit(b.window, 'hello');

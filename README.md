@@ -50,6 +50,24 @@ The Drive sheet leads with a single large link that changes meaning as setup pro
 page. A **Paste** button fills the client ID from the clipboard, and the authorized origin
 has a one-tap copy button.
 
+### Floating bot
+
+A draggable chat-head style bubble sits above every screen, modelled on the pattern
+Facebook Messenger and Android bubbles use (pointer events, a drag threshold so taps stay
+taps, and a spring to the nearest edge):
+
+- **drag** it anywhere; it snaps to the left or right edge at the height you dropped it and
+  remembers both, per device
+- **tap** starts the voice loop from whatever screen you are on; tap again to stop
+- **long-press** opens the thing that screen needs (drafts, Drive connect, settings)
+- **drag onto the ✕ bin** to hide it; the Setup toggle or the restore chip brings it back
+- the face reacts: mint rings while listening, violet with sound bars while speaking, amber
+  while thinking, and the eyes blink
+- a small counter shows how many drafts are saved
+
+It is the same voice controller as the big mic button, so nothing diverges — the bot just
+makes it reachable from anywhere.
+
 ### Addressable screens
 
 Every screen has a URL: `#voice`, `#drive`, `#drafts`, `#setup`. Shares and bookmarks land
