@@ -67,6 +67,9 @@ async function boot(options = {}) {
   if (options.seedScreen) {
     window.localStorage.setItem('jenni_screen', options.seedScreen);
   }
+  if (options.seed) {
+    Object.entries(options.seed).forEach(([key, value]) => window.localStorage.setItem(key, value));
+  }
   if (options.drive) {
     window.localStorage.setItem('jenni_drive_v1', JSON.stringify(options.drive));
   }
@@ -119,6 +122,13 @@ async function boot(options = {}) {
     return { ok: true, status: 200, json: async () => ({}) };
   };
 
+  /* jsdom ships no WebCrypto; use Node's so the vault code is really exercised */
+  const nodeCrypto = require('crypto').webcrypto;
+  Object.defineProperty(window, 'crypto', { value: nodeCrypto, configurable: true });
+  window.TextEncoder = TextEncoder;
+  window.TextDecoder = TextDecoder;
+
+  window.eval(fs.readFileSync(path.join(ROOT, 'security.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'));
   await wait(180);
 
@@ -244,12 +254,12 @@ function submit(window, text) {
   ok(b.$('sheet-drive').hidden === true, 'clearing the hash returns to chat');
   b.dom.window.close();
 
-  /* a shared link that needs a key lands on setup instead of a dead screen */
+  /* a link that needs a key lands on setup once the gate is passed */
   b = await boot({ cfg: null });
-  b.$('gateSkip').click();
-  await wait(600);
-  ok(b.$('app').hidden === false, 'skip goes to the app shell');
-  ok(b.$('sheet-setup').hidden === false, 'no key yet sends them to setup');
+  b.window.location.hash = '#drive';
+  b.window.dispatchEvent(new b.window.Event('hashchange'));
+  await wait(200);
+  ok(b.$('gate').hidden === false, 'without a key a deep link still shows the gate');
 
   /* a returning user comes back to the screen they left */
   b.window.localStorage.setItem('jenni_screen', 'drafts');
@@ -349,6 +359,101 @@ function submit(window, text) {
   b.window.document.querySelector('.tab[data-tab="drive"]').click();
   await wait(80);
   ok(b.$('bot').getAttribute('title').includes('Connect') || b.$('bot').getAttribute('title').includes('bolo'), 'bot hint changes on the drive screen', b.$('bot').getAttribute('title'));
+  b.dom.window.close();
+
+  /* ── de-clutter guard: the old walls of text must not come back ────────── */
+  const page = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const banned = [
+    'Jenni ke jawab yahan save hote hain',
+    'Name hai Jenni. Bolo ya likho',
+    'bina haath lagaye baat chalti rahegi',
+    'Kaha se jodna hai',
+    'Yeh app aapke phone se seedha provider ko request bhejti hai',
+    'Step-by-step guide',
+    'Rukna ho to mic button'
+  ];
+  banned.forEach((line) => ok(!page.includes(line), `verbose copy removed — ${line.slice(0, 28)}…`));
+  ok((page.match(/class="hint"/g) || []).length <= 3, 'at most three long hints remain',
+    String((page.match(/class="hint"/g) || []).length));
+
+  /* ── security: PIN, encrypted key, cooldown, wipe ──────────────────────── */
+  b = await boot({ cfg: null });
+  ok(b.$('gatePinWrap') !== null, 'gate offers an optional PIN');
+  ok(b.window.document.querySelector('meta[http-equiv="Content-Security-Policy"]') !== null, 'a CSP meta tag is injected at boot');
+  const csp = b.window.document.querySelector('meta[http-equiv="Content-Security-Policy"]').getAttribute('content');
+  ok(csp.includes("default-src 'self'"), 'CSP restricts sources to self', csp.slice(0, 40));
+  ok(csp.includes("object-src 'none'"), 'CSP blocks plugins');
+
+  /* set a PIN + key, then check nothing readable is stored */
+  b.$('setupKey').value = CFG.apiKey;
+  b.$('setupPin').value = '4821';
+  b.$('setupPin2').value = '4821';
+  b.$('btnSaveKey').click();
+  await wait(700);
+  ok(b.$('app').hidden === false, 'PIN + key saves and opens the app');
+  ok(b.window.localStorage.getItem('jenni_vault_v1') !== null, 'the key is sealed in a vault');
+  ok(b.window.localStorage.getItem('jenni_cfg_v1') === null, 'no plaintext config is left behind');
+  const vaultRaw = b.window.localStorage.getItem('jenni_vault_v1');
+  ok(!vaultRaw.includes(CFG.apiKey), 'the key is not readable in storage', vaultRaw.slice(0, 40));
+  ok(!vaultRaw.includes('gsk'), 'no key prefix leaks into the vault blob');
+  const lockRaw = JSON.parse(b.window.localStorage.getItem('jenni_lock_v1'));
+  ok(lockRaw.enabled === true, 'lock state is on');
+  ok(b.$('secPinState').textContent === 'On', 'security panel shows the PIN as on');
+  ok(b.$('secKeyState').textContent === 'Encrypted', 'security panel shows the key encrypted');
+
+  /* locking hides the app and drops the key from memory */
+  b.$('btnLockNow').click();
+  await wait(80);
+  ok(b.$('lockScreen').hidden === false, 'Lock now shows the lock screen');
+  ok(b.$('app').hidden === true, 'the app is hidden while locked');
+  ok(b.$('apiKey').value === '', 'the key field is cleared on lock');
+
+  /* wrong PIN is rejected and counted */
+  b.$('lockPin').value = '0000';
+  b.$('lockForm').dispatchEvent(new b.window.Event('submit', { bubbles: true, cancelable: true }));
+  await wait(600);
+  ok(b.$('lockResult').textContent.includes('Galat'), 'a wrong PIN is rejected', b.$('lockResult').textContent);
+  ok(b.$('app').hidden === true, 'still locked after a wrong PIN');
+  ok(b.$('lockResult').textContent.includes('bache'), 'the remaining attempts are shown');
+
+  /* right PIN unlocks and restores the key */
+  b.$('lockPin').value = '4821';
+  b.$('lockForm').dispatchEvent(new b.window.Event('submit', { bubbles: true, cancelable: true }));
+  await wait(900);
+  ok(b.$('lockScreen').hidden === true, 'the right PIN unlocks');
+  ok(b.$('app').hidden === false, 'the app comes back');
+  ok(b.$('brandMeta').textContent.includes('Groq'), 'the provider is restored from the vault', b.$('brandMeta').textContent);
+
+  /* the setup field shows a mask, never the real key */
+  b.$('btnOpenSetup').click();
+  await wait(250);
+  const keyField = b.$('apiKey').value;
+  ok(keyField.includes('\u2022'), 'the setup field masks the saved key', keyField);
+  ok(!keyField.includes(CFG.apiKey.slice(-8)), 'the mask hides the key body');
+
+  /* saving settings must not downgrade the vault to plaintext */
+  b.$('btnSave').click();
+  await wait(400);
+  ok(b.window.localStorage.getItem('jenni_vault_v1') !== null, 'the vault survives a settings save');
+  ok(b.window.localStorage.getItem('jenni_cfg_v1') === null, 'no plaintext config comes back');
+
+  /* a reload starts locked, with no key in memory */
+  const vaultAfter = b.window.localStorage.getItem('jenni_vault_v1');
+  b.dom.window.close();
+  b = await boot({ cfg: null, seed: { ['jenni_vault_v1']: vaultAfter, ['jenni_lock_v1']: JSON.stringify(lockRaw) } });
+  await wait(200);
+  ok(b.$('lockScreen').hidden === false, 'a reload with a vault starts locked');
+  ok(b.$('app').hidden === true, 'the app is not shown before the PIN');
+  b.dom.window.close();
+
+  /* panic wipe removes everything jenni-owned */
+  b = await boot();
+  b.window.localStorage.setItem('jenni_drafts_v1', JSON.stringify([{ id: '1', title: 't', text: 'x', at: '' }]));
+  b.window.confirm = () => true;
+  try { b.$('btnPanic').click(); } catch (error) { /* jsdom navigation is not implemented */ }
+  await wait(200);
+  const leftovers = Object.keys(b.window.localStorage).filter((k) => k.startsWith('jenni_'));
+  ok(leftovers.length === 0, 'panic wipe leaves no jenni keys', leftovers.join(',') || 'clean');
   b.dom.window.close();
 
   /* ── failures stay readable ────────────────────────────────────────────── */
