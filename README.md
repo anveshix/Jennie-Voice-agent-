@@ -32,8 +32,29 @@ Language is switchable from the voice bar (**हिंदी / EN**) and from Se
 one recording at a time, so there the mic has to be tapped for each turn.
 
 Drafts, optional read-aloud for typed replies, and Google Drive upload with `drive.file`
-(client ID only — the authorized JavaScript origin is `https://anveshix.github.io`) work
-on top of that.
+work on top of that.
+
+### Mobile-shaped shell
+
+The app is laid out like an installed Android/iOS app: a sticky app bar with a status dot
+and a Drive shortcut, a five-item bottom navigation (Chat · Voice · Drafts · Drive ·
+Setup), bottom sheets with a drag handle, and no double-tap zoom or text selection on
+controls. Safe-area insets are respected on notched phones.
+
+### Drive is always one link away
+
+The Drive sheet leads with a single large link that changes meaning as setup progresses:
+**"build a client ID first"** → Google Cloud, **"connect Google Drive"** → OAuth prompt,
+**"open my Drive files"** → your files. While Drive is not connected the app bar shows a
+`+`/`!` badge, and the sheet also carries a credentials link, this guide, and Google's help
+page. A **Paste** button fills the client ID from the clipboard, and the authorized origin
+has a one-tap copy button.
+
+### Addressable screens
+
+Every screen has a URL: `#voice`, `#drive`, `#drafts`, `#setup`. Shares and bookmarks land
+where you expect, the last screen is restored on the next visit, and the hardware back
+button closes a sheet before it leaves the app.
 
 Step-by-step Hindi walkthrough: [`Phone-Setup-Hindi.md`](./Phone-Setup-Hindi.md).
 

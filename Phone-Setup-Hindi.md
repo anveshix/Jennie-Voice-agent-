@@ -30,6 +30,8 @@ https://anveshix.github.io/Jennie-Voice-agent-/
 
 ### स्टेप 3 — home screen पर लगाओ
 
+अब app बिल्कुल mobile app जैसा दिखता है — ऊपर Jenni का app bar (हरा dot = ready), नीचे पाँच tab (Chat · Voice · Drafts · Drive · Setup), और sheets नीचे से खुलती हैं।
+
 - **Android (Chrome):** ऊपर right ⋮ → **Add to Home screen** → **Install**
 - **iPhone (Safari):** नीचे Share ⬆️ → **Add to Home Screen**
 
@@ -99,6 +101,53 @@ Desktop Chrome/Edge में भी पूरा loop चलता है — t
 | बोलती है पर सुनाई नहीं देता | phone का media volume, silent mode बंद करो |
 | पहला शब्द कट जाता है | mic खुलने के बाद 1 सेकंड रुककर बोलो |
 | कुछ नहीं समझ आ रहा | Chrome में खोलो — Safari से बेहतर चलता है |
+
+---
+
+---
+
+## Drive connect — एक link, दो tap
+
+Drive tab खोलो। सबसे ऊपर एक **बड़ा हरा link** है — यही सारा काम करता है:
+
+| Link क्या कहता है | मतलब | दबाने पर |
+|---|---|---|
+| **"पहले client ID बनाओ — link खोलो"** | अभी setup बाकी है | Google Cloud खुलेगा |
+| **"Google Drive connect करो"** | client ID है, permission बाकी | Google का पॉपअप → Allow |
+| **"मेरी Drive files खोलो"** | जुड़ गया | Drive में `.md` files |
+
+बाकी जगह link हमेशा हाथ में रहता है:
+
+- **App bar** में Drive icon (top-right) — जुड़ा नहीं तो उस पर **!** या **+** का निशान
+- Drive tab में **Open Google Cloud credentials** link
+- **Step-by-step guide** link (यही गाइड)
+- **Google की मदद** link
+
+### पहली बार करना है (2 मिनट)
+
+1. Drive tab → **Open Google Cloud credentials** (या बड़ा link) दबाओ।
+2. नया project → **Google Drive API** enable।
+3. OAuth consent screen → External → अपना email test user।
+4. Credentials → **OAuth client ID** → **Web application**।
+5. Authorized JavaScript origin में **copy** बटन दबाओ और paste करो — बस यही: `https://anveshix.github.io`
+6. Client ID copy करो → app में **Paste** दबाओ (clipboard से खुद भर जाएगा) → **Save client ID**।
+7. अब बड़ा link **"Google Drive connect करो"** हो जाएगा → दबाओ → Allow।
+
+बस। अब किसी भी draft पर **Drive** दबाओ — file Drive में चली जाएगी।
+
+### Link से सीधे screen खोलो
+
+अब हर screen का अपना link है — WhatsApp पर भेज सकते हो, bookmark बना सकते हो:
+
+| Link | खुलेगा |
+|---|---|
+| `…github.io/Jennie-Voice-agent-/` | Chat |
+| `…/#voice` | सीधे voice mode |
+| `…/#drive` | Drive connect screen |
+| `…/#drafts` | आपके drafts |
+| `…/#setup` | Key वाली settings |
+
+और अगली बार app खोलोगे तो **वही screen** खुलेगी जहाँ छोड़ी थी। Phone का **back button** भी सही चलता है — पहले sheet बंद, फिर app से बाहर।
 
 ---
 

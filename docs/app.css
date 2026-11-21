@@ -395,19 +395,6 @@ code {
 .composer__foot.is-error { color: var(--rose); }
 
 /* ── tabs ───────────────────────────────────────────────────────────────── */
-.tabs {
-  display: grid; grid-template-columns: repeat(4, 1fr);
-  gap: 4px; padding: 6px 10px 8px;
-  border-top: 1px solid var(--line); background: rgba(5, 7, 12, 0.95);
-}
-.tab {
-  min-height: 40px; border-radius: 10px; border: 1px solid transparent;
-  background: transparent; color: var(--muted); font-size: 0.8rem; font-weight: 600;
-  cursor: pointer; transition: color 0.2s, background 0.2s;
-}
-.tab.is-on { color: var(--text); background: var(--surface); border-color: var(--line); }
-.tab:hover { color: var(--text); }
-
 /* ── sheets ─────────────────────────────────────────────────────────────── */
 .scrim {
   position: fixed; inset: 0; z-index: 40;
@@ -614,4 +601,195 @@ code {
 @media (max-width: 380px) {
   .voicebtn { width: 64px; height: 64px; }
   .voicebtn svg { width: 26px; height: 26px; }
+}
+
+/* ══════════════════════════════════════════════════════════════ MOBILE SHELL
+   Looks and behaves like an installed app: fixed app bar with status dot,
+   native-feeling bottom navigation, sheets that slide over the content.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.appbar {
+  position: sticky; top: 0; z-index: 30;
+  padding: calc(8px + env(safe-area-inset-top)) 14px 10px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(5, 7, 12, 0.88);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+.appbar__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+.brand__avatar {
+  position: relative; flex: 0 0 auto;
+  width: 38px; height: 38px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: radial-gradient(circle at 32% 28%, #8ef7cf, #22c996 55%, #0a6b52);
+  color: rgba(4, 18, 12, 0.75);
+}
+.brand__avatar svg {
+  width: 19px; height: 19px; fill: none; stroke: currentColor;
+  stroke-width: 1.6; stroke-linecap: round;
+}
+.brand__dot {
+  position: absolute; right: -1px; bottom: -1px;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--faint); border: 2px solid #05070c;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.brand__dot.is-ok { background: var(--mint); box-shadow: 0 0 10px rgba(46, 230, 168, 0.9); }
+.brand__dot.is-busy { background: var(--amber); animation: breathe 1.2s infinite; }
+.brand__dot.is-error { background: var(--rose); }
+.brand__text { min-width: 0; }
+.brand__text strong { display: block; font-size: 1.02rem; letter-spacing: -0.01em; line-height: 1.2; }
+
+.icon-btn--round {
+  border-radius: 50%; width: 40px; height: 40px;
+  background: var(--surface);
+}
+.icon-btn--round.is-on { border-color: rgba(46, 230, 168, 0.6); color: var(--mint); }
+.icon-btn__badge {
+  position: absolute; top: 2px; right: 2px;
+  min-width: 15px; height: 15px; padding: 0 3px;
+  display: grid; place-items: center;
+  border-radius: 999px; background: var(--amber); color: #241a05;
+  font-size: 0.6rem; font-weight: 800;
+}
+.appbar__actions { display: flex; gap: 8px; }
+.appbar__actions .icon-btn { position: relative; }
+
+/* bottom navigation: five equal targets, labels always visible */
+.bottomnav {
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  padding: 6px 6px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: rgba(5, 7, 12, 0.96);
+  backdrop-filter: blur(18px);
+}
+.tab {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  min-height: 50px; padding: 6px 2px;
+  border: 0; border-radius: 12px;
+  background: transparent; color: var(--faint);
+  font-size: 0.66rem; font-weight: 600; letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s, transform 0.12s;
+}
+.tab svg {
+  width: 22px; height: 22px; fill: none; stroke: currentColor;
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+  transition: transform 0.2s var(--ease);
+}
+.tab:active { transform: scale(0.94); }
+.tab.is-on { color: var(--mint); }
+.tab.is-on svg { transform: translateY(-1px) scale(1.06); }
+.tab.is-on::before {
+  content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  width: 26px; height: 3px; border-radius: 0 0 4px 4px; background: var(--mint);
+}
+.tab__badge {
+  position: absolute; top: 3px; right: 14px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  display: grid; place-items: center;
+  border-radius: 999px; background: var(--violet); color: #120c22;
+  font-size: 0.6rem; font-weight: 800;
+}
+
+/* the voice tab doubles as a state light */
+.tab[data-tab="voice"].is-on { color: var(--mint); }
+.app.is-speaking .tab[data-tab="voice"] { color: var(--violet); }
+
+/* ══════════════════════════════════════════════════════════════ DRIVE LINKS */
+
+.drivecard {
+  padding: 14px; border-radius: 18px;
+  background: linear-gradient(160deg, rgba(46, 230, 168, 0.08), rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--line);
+}
+.drivecard__top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.drivecard__files { font-size: 0.75rem; color: var(--faint); }
+.drivecard__lead { margin: 12px 0 10px; font-size: 0.88rem; color: var(--muted); }
+
+.connectlink {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px; border-radius: 16px;
+  background: linear-gradient(135deg, #2ee6a8, #12a97a);
+  color: #04120c; font-weight: 700; font-size: 0.95rem;
+  box-shadow: 0 14px 32px -18px rgba(46, 230, 168, 0.9);
+  transition: transform 0.14s var(--ease), box-shadow 0.2s;
+}
+.connectlink:hover { text-decoration: none; }
+.connectlink:active { transform: scale(0.985); }
+.connectlink svg {
+  width: 22px; height: 22px; flex: 0 0 auto;
+  fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.connectlink span:first-of-type { flex: 1; min-width: 0; }
+.connectlink__arrow { font-size: 1.3rem; opacity: 0.7; }
+
+.drivecard__actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+.setup-link {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 10px; padding: 12px 14px;
+  border-radius: 14px; background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 0.86rem; color: var(--text);
+}
+.setup-link:hover { text-decoration: none; background: var(--surface-2); }
+.setup-link svg {
+  width: 18px; height: 18px; flex: 0 0 auto;
+  fill: none; stroke: var(--mint); stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+.linkrow {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--line);
+  color: var(--text);
+  transition: background 0.2s, transform 0.12s;
+}
+.linkrow:hover { text-decoration: none; background: var(--surface-2); }
+.linkrow:active { transform: scale(0.99); }
+.linkrow__icon { font-size: 1.1rem; }
+.linkrow__text { flex: 1; min-width: 0; }
+.linkrow__text strong { display: block; font-size: 0.9rem; }
+.linkrow__arrow { color: var(--faint); font-size: 1.2rem; }
+
+.copybtn { min-height: 30px; padding: 4px 10px; font-size: 0.72rem; margin-left: 6px; }
+.steps--tight li { margin-bottom: 5px; }
+.stack--tight { gap: 8px; }
+
+/* ── native-feeling touches ────────────────────────────────────────────── */
+
+/* no text selection or long-press menus on chrome-like elements */
+.voicebtn, .tab, .icon-btn, .chip-btn, .connectlink, .linkrow, .prov {
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+}
+.voicebtn, .tab, .icon-btn, .connectlink, .linkrow, .chip-btn {
+  touch-action: manipulation;   /* no double-tap zoom delay */
+}
+
+/* smooth sheet scroll + a grab handle, like a native bottom sheet */
+.sheet__head::after {
+  content: ""; position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+  width: 38px; height: 4px; border-radius: 999px; background: rgba(148, 163, 184, 0.35);
+}
+.sheet__head { position: relative; padding-top: 16px; }
+
+/* the composer should never sit under the keyboard on iOS */
+@supports (padding: max(0px)) {
+  .composer { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+}
+
+/* landscape phones: keep the app bar slim */
+@media (max-height: 480px) and (orientation: landscape) {
+  .appbar { padding-top: calc(4px + env(safe-area-inset-top)); padding-bottom: 6px; }
+  .brand__avatar { width: 32px; height: 32px; }
+  .voicebar { padding-top: 6px; }
+  .voicebtn { width: 58px; height: 58px; }
+  .voicebtn svg { width: 24px; height: 24px; }
+  .bottomnav .tab { min-height: 42px; }
 }

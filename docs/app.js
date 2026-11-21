@@ -631,6 +631,7 @@
       foot.className = 'composer__foot is-busy';
       foot.textContent = voice.speaking ? 'Bol rahi hoon — rukna ho to 🔇 dabao' : 'Sun rahi hoon… bolo';
     }
+    paintTabs();
     if (voice.mode) keepAwake();
   }
 
@@ -759,6 +760,11 @@
   }
 
   function paintDrafts() {
+    const badge = $('draftCount');
+    if (badge) {
+      badge.hidden = state.drafts.length === 0;
+      badge.textContent = String(Math.min(state.drafts.length, 99));
+    }
     const list = $('draftList');
     if (!list) return;
     if (!state.drafts.length) {
@@ -957,16 +963,106 @@
   }
 
   function paintDrive() {
-    const ok = driveReady();
+    const hasId = driveReady();
+    const connected = Boolean(state.driveToken && state.driveToken.expires > now());
+
     const badge = $('driveStatus');
     const text = $('driveStatusText');
-    if (badge) badge.className = 'status' + (ok ? ' is-ok' : '');
-    if (text) text.textContent = ok
-      ? (state.driveToken && state.driveToken.expires > now() ? 'Connected' : 'Client ID saved — connect karo')
-      : 'Not set up';
+    if (badge) badge.className = 'status' + (hasId ? ' is-ok' : '');
+    if (text) {
+      text.textContent = connected ? 'Connected' : hasId ? 'Client ID saved — connect karo' : 'Not connected';
+    }
+
+    /* the one link that matters: always present, always clickable */
+    const link = $('driveConnectLink');
+    const label = $('driveConnectLabel');
+    const lead = $('driveLead');
+    if (link) {
+      if (!hasId) {
+        link.setAttribute('href', 'https://console.cloud.google.com/apis/credentials');
+        link.setAttribute('target', '_blank');
+        link.setAttribute('rel', 'noopener noreferrer');
+        link.dataset.action = 'setup';
+      } else if (connected) {
+        link.setAttribute('href', 'https://drive.google.com/drive/search?q=.md');
+        link.setAttribute('target', '_blank');
+        link.setAttribute('rel', 'noopener noreferrer');
+        link.dataset.action = 'open';
+      } else {
+        link.setAttribute('href', '#connect');
+        link.removeAttribute('target');
+        link.dataset.action = 'connect';
+      }
+    }
+    if (label) {
+      label.textContent = !hasId
+        ? 'Pehle client ID banao — link kholo'
+        : connected ? 'Meri Drive files kholo' : 'Google Drive connect karo';
+    }
+    if (lead) {
+      lead.textContent = !hasId
+        ? 'Do minat ka setup: link kholo, client ID banao, niche paste karo.'
+        : connected ? 'Ho gaya. Ab koi bhi draft Drive par bhej sakte ho.'
+          : 'Bas ek tap — Google se permission maango.';
+    }
+
+    /* the app-bar shortcut shows a dot until Drive is connected */
+    const appBadge = $('driveBadge');
+    if (appBadge) {
+      appBadge.hidden = connected;
+      appBadge.textContent = hasId ? '!' : '+';
+    }
+    const quick = $('btnDriveQuick');
+    if (quick) quick.classList.toggle('is-on', connected);
+
     if ($('clientId')) $('clientId').value = (state.drive && state.drive.clientId) || '';
     const originHint = $('originHint');
     if (originHint) originHint.textContent = location.origin;
+  }
+
+  /* The connect link behaves differently depending on how far setup has got,
+     but it is always one tap away from the Drive sheet. */
+  function onDriveLinkClick(event) {
+    const link = $('driveConnectLink');
+    if (!link) return;
+    const action = link.dataset.action;
+    if (action === 'connect') {
+      event.preventDefault();
+      connectDrive();
+      return;
+    }
+    if (action === 'open') return;      // real Drive URL, let the browser handle it
+    // setup: fall through to the Google Cloud URL, and nudge the field below
+    setTimeout(() => {
+      const input = $('clientId');
+      if (input) input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 200);
+  }
+
+  async function pasteClientId() {
+    try {
+      const clip = await navigator.clipboard.readText();
+      const value = String(clip || '').trim();
+      if (!value) { toast('Clipboard khali hai', true); return; }
+      if (!/\.apps\.googleusercontent\.com$/.test(value)) {
+        toast('Clipboard me client ID jaisi cheez nahi mili', true);
+        return;
+      }
+      $('clientId').value = value;
+      saveClientId();
+    } catch (error) {
+      toast('Paste ki permission nahi mili — haath se paste karo', true);
+    }
+  }
+
+  async function copyOrigin() {
+    const origin = location.origin;
+    try {
+      await navigator.clipboard.writeText(origin);
+      toast('Origin copy ho gaya: ' + origin);
+    } catch (error) {
+      toast('Copy nahi hua — ' + origin, true);
+    }
   }
 
   /* ══════════════════════════════════════════════════════════════ SETUP UI */
@@ -1090,8 +1186,10 @@
 
   /* ══════════════════════════════════════════════════════════════ SHEETS */
 
-  function openSheet(name) {
-    closeSheets();
+  const ROUTES = ['chat', 'voice', 'drafts', 'drive', 'setup'];
+
+  function openSheet(name, options = {}) {
+    closeSheets({ keepMemory: true });
     const sheet = $('sheet-' + name);
     if (!sheet) return;
     $('scrim').hidden = false;
@@ -1100,14 +1198,61 @@
     if (name === 'drafts') paintDrafts();
     if (name === 'drive') { paintDrive(); listDriveFiles(); }
     if (name === 'setup') fillSetupForm();
-    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('is-on', t.dataset.tab === name));
+    rememberScreen(name);
+    if (!options.silent) setHash(name);
+    paintTabs();
   }
 
-  function closeSheets() {
+  function closeSheets(options = {}) {
     $('scrim').hidden = true;
     document.querySelectorAll('.sheet').forEach((s) => { s.hidden = true; });
     document.body.style.overflow = '';
-    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('is-on', t.dataset.tab === 'chat'));
+    // when another sheet opens next, "chat" is not where the user is going
+    if (options.keepMemory !== true) rememberScreen('chat');
+    paintTabs();
+  }
+
+  /* Screens are addressable (#drive, #setup…) so a link can land anywhere and
+     the phone's back button does what people expect. */
+  function setHash(name) {
+    const target = name === 'chat' ? '' : '#' + name;
+    if ((location.hash || '') === target) return;
+    try {
+      history.pushState({ screen: name }, '', target || location.pathname + location.search);
+    } catch (error) {
+      location.hash = target;   // file:// and odd embeds
+    }
+  }
+
+  function rememberScreen(name) {
+    try { localStorage.setItem('jenni_screen', name); } catch (error) { /* private mode */ }
+  }
+
+  function routeFromLocation() {
+    const raw = (location.hash || '').replace(/^#/, '').split('?')[0];
+    return ROUTES.includes(raw) ? raw : '';
+  }
+
+  /* Only ever used to *land* on a screen. openSheet() already clears the
+     others, so nothing here calls closeSheets() — that would overwrite the
+     remembered screen before we read it. */
+  function applyRoute(options = {}) {
+    const name = routeFromLocation();
+    if (name === 'voice') { startVoiceMode(); return; }
+    if (!name) { closeSheets(); return; }
+    if (!state.cfg || !state.cfg.apiKey) { openSheet('setup', options); return; }
+    openSheet(name, options);
+  }
+
+  /* Highlight the section that is actually on screen. */
+  function paintTabs() {
+    let active = 'chat';
+    if (voice.mode) active = 'voice';
+    else {
+      const open = [...document.querySelectorAll('.sheet')].find((s) => !s.hidden);
+      if (open) active = open.id.replace('sheet-', '');
+    }
+    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('is-on', t.dataset.tab === active));
   }
 
   /* ══════════════════════════════════════════════════════════════ WIRING */
@@ -1118,7 +1263,7 @@
     el.style.height = Math.min(el.scrollHeight, 132) + 'px';
   }
 
-  function showApp() {
+  function showApp(options = {}) {
     $('gate').hidden = true;
     $('app').hidden = false;
     const cfg = state.cfg;
@@ -1126,7 +1271,10 @@
     paintChat();
     paintDrive();
     paintDrafts();
-    if (!cfg || !cfg.apiKey) setTimeout(() => openSheet('setup'), 350);
+    paintTabs();
+    if ((!cfg || !cfg.apiKey) && options.openSetup !== false) {
+      setTimeout(() => openSheet('setup'), 350);
+    }
   }
 
   function wireGate() {
@@ -1216,12 +1364,24 @@
     document.querySelectorAll('.tab').forEach((tab) => {
       tab.addEventListener('click', () => {
         const name = tab.dataset.tab;
-        if (name === 'chat') closeSheets();
-        else openSheet(name);
+        if (name === 'chat') {
+          closeSheets();
+          stopVoiceMode(true);
+        } else if (name === 'voice') {
+          closeSheets();
+          if (voice.mode) stopVoiceMode();
+          else startVoiceMode();
+        } else {
+          openSheet(name);
+        }
       });
     });
 
     $('scrim').addEventListener('click', closeSheets);
+
+    /* the phone's back button closes a sheet before it leaves the app */
+    window.addEventListener('popstate', () => applyRoute({ silent: true }));
+    window.addEventListener('hashchange', () => applyRoute({ silent: true }));
     document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', closeSheets));
 
     $('suggestions').querySelectorAll('button').forEach((button) => {
@@ -1286,14 +1446,52 @@
     $('btnDriveSave').addEventListener('click', saveClientId);
     $('btnDriveConnect').addEventListener('click', connectDrive);
     $('btnDriveOff').addEventListener('click', disconnectDrive);
+    $('btnDriveRefresh').addEventListener('click', listDriveFiles);
+    $('btnDrivePaste').addEventListener('click', pasteClientId);
+    $('btnCopyOrigin').addEventListener('click', copyOrigin);
+    $('driveConnectLink').addEventListener('click', onDriveLinkClick);
+
+    /* app-bar shortcut: open the Drive sheet from anywhere */
+    $('btnDriveQuick').addEventListener('click', () => openSheet('drive'));
+
+    /* link rows inside the drive sheet */
+    $('driveLinkApp').addEventListener('click', (event) => {
+      event.preventDefault();
+      if (driveReady()) connectDrive();
+      else toast('Pehle niche client ID paste karo', true);
+    });
+    $('driveLinkDocs').addEventListener('click', (event) => {
+      event.preventDefault();
+      const link = document.createElement('a');
+      link.href = 'https://github.com/anveshix/Jennie-Voice-agent-/blob/main/Phone-Setup-Hindi.md';
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.click();
+    });
   }
 
   /* ── boot ──────────────────────────────────────────────────────────────── */
   function boot() {
+    // restore the user's voice language and chosen voice
+    voice.ttsVoice = pickVoice(voice.lang);
+    if (window.speechSynthesis) {
+      window.speechSynthesis.onvoiceschanged = () => {
+        if (!voice.ttsVoice) voice.ttsVoice = pickVoice(voice.lang);
+        fillVoiceList();
+      };
+    }
     wireGate();
     wireApp();
-    if (state.cfg && state.cfg.apiKey) showApp();
-    else {
+    if (state.cfg && state.cfg.apiKey) {
+      // read the destination before showApp() paints the default screen
+      const target = routeFromLocation() || localStorage.getItem('jenni_screen') || '';
+      showApp();
+      // then land on it — a shared link wins, otherwise resume where they were.
+      // openSheet() is called directly: applyRoute() re-reads the hash, which is
+      // empty on a resumed visit, so it would always fall back to chat.
+      if (target && target !== 'chat') setTimeout(() => openSheet(target, { silent: true }), 80);
+      else rememberScreen('chat');
+    } else {
       state.pendingProvider = 'groq';
       document.querySelector('#gateBody [data-provider="groq"]').classList.add('is-on');
       $('setupBase').value = PRESETS.groq.baseUrl;
