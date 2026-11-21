@@ -1968,3 +1968,103 @@ a {
   .room-actions .btn { flex: 1 1 100%; }
   .room-status__row { font-size: 11px; padding: 8px 10px; }
 }
+
+/* ============================================================= CONNECTIONS */
+.conn {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.conn + .conn { margin-top: 8px; }
+
+.conn__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+  transition: background 0.2s;
+}
+
+.conn__head::-webkit-details-marker { display: none; }
+
+.conn__head:hover { background: rgba(255, 255, 255, 0.035); }
+
+.conn__num {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  border: 1px solid rgba(46, 230, 168, 0.3);
+  background: rgba(46, 230, 168, 0.1);
+  color: #8bf5cd;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.conn__title { min-width: 0; flex: 1; display: grid; gap: 1px; }
+.conn__title strong { font-size: 12.5px; font-weight: 600; color: #e7eef8; }
+.conn__sub { font-size: 10.5px; color: var(--faint); }
+.conn__sub code {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.16);
+  color: #ffe0a8;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.conn__state {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.conn__state.is-on {
+  border-color: rgba(46, 230, 168, 0.4);
+  background: rgba(46, 230, 168, 0.12);
+  color: #8bf5cd;
+}
+
+.conn__state.is-part {
+  border-color: rgba(246, 193, 119, 0.4);
+  background: rgba(246, 193, 119, 0.1);
+  color: #f8d6a3;
+}
+
+.conn__body {
+  display: grid;
+  gap: 9px;
+  padding: 0 14px 14px;
+}
+
+.conn[open] .conn__head { border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+
+.conn-actions {
+  display: grid;
+  gap: 9px;
+  padding: 14px;
+  border: 1px dashed rgba(148, 163, 184, 0.22);
+  border-radius: 16px;
+  background: rgba(46, 230, 168, 0.03);
+}
+
+.conn-actions .field-row .btn { flex: 0 0 auto; }
+
+@media (max-width: 620px) {
+  .conn__title strong { font-size: 12px; }
+  .conn__sub { font-size: 10px; }
+  .conn-actions .field-row .btn { flex: 1 1 100%; }
+}

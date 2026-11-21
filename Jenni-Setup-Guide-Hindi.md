@@ -135,6 +135,55 @@ Model नाम बदलते रहते हैं — अपने provider
 | `Port 3000 already in use` | port busy | `PORT=3001` → `localhost:3001` |
 | `npm: command not found` | Node नहीं | स्टेप 1 |
 
+## Telegram या Google Drive जोड़ना (तीन options, एक-एक स्टेप)
+
+तीनों options अलग-अलग हैं — जो ज़रूरत हो वही on करो, बाकी बंद रहने दो। कुछ भी अपने आप connect नहीं होता; credentials आप खुद डालते हैं। App में बाईं तरफ़ **Send & save elsewhere** खोलो।
+
+### Option 1 — Telegram (सबसे आसान, कोई OAuth नहीं, कोई verification नहीं)
+
+1. Telegram में **@BotFather** खोलो → `/newbot` → नाम दो।
+2. जो token मिलेगा (`123456789:ABC…`) वो copy करो।
+3. अपने नए bot को **कोई भी message** भेजो — "hi" काफ़ी है। (Bot खुद chat शुरू नहीं कर सकता।)
+4. App के option 1 में token paste करो → **Find my chat** → chat चुनो → **Save & test**।
+
+Save करते ही असली confirmation message जाता है — token या chat गलत हुआ तो वहीं error दिखेगा, चुपचाप fail नहीं होगा। Draft भेजने के लिए editor में draft खोलो → **Send draft to Telegram**। 3900 अक्षर तक एक message; उससे लंबा हो तो कट जाता है और message में लिखा आता है कितने अक्षर छूटे।
+
+### Option 2 — Google Drive, browser mode (सिर्फ client ID, कोई verification नहीं)
+
+Scope `drive.file` है, यानी app सिर्फ अपनी बनाई files देख सकती है। पूरा Drive search करने के लिए Google की verification + security assessment चाहिए — इसलिए वो जान-बूझकर नहीं माँगा गया।
+
+1. Google Cloud → नया project → **Google Drive API** enable करो।
+2. OAuth consent screen → External → अपना email test user में डालो।
+3. Credentials → **OAuth client ID** → Web application।
+4. Authorized JavaScript origin: `http://localhost:3000` (या आपका HTTPS tunnel URL)।
+5. Client ID (`.apps.googleusercontent.com` पर खत्म होता है) paste करो → **Save client ID** → **Connect Google**।
+
+Google का token browser में बनता है और लगभग 1 घंटे चलता है; upload सीधे browser से Google को जाता है। Server वो token नहीं देखता, और client secret की ज़रूरत ही नहीं।
+
+### Option 3 — Google Drive, server mode (background upload)
+
+1. वही OAuth client, साथ में **client secret** भी copy करो (`GOCSPX-…`)।
+2. Redirect URI register करो, जैसे `https://your-tunnel.example/oauth2callback`।
+3. Option 3 में secret + redirect URI डालो → **Show Google link** → link खोलो → allow करो।
+4. Browser के URL से `?code=` की value copy करो → paste → **Finish connection**।
+
+Server उस एक-बार वाले code को refresh token में बदल देता है, इसलिए browser बंद होने के बाद भी upload चलता रहता है। ये token `storage/connections.json` में mode `600` के साथ रहता है (git-ignored) और किसी browser को वापस नहीं दिया जाता — इसे API key जितना कीमती समझो। **Disconnect** दबाने पर मिट जाता है।
+
+### तीनों में फ़र्क़
+
+| | Telegram | Drive browser | Drive server |
+|---|---|---|---|
+| क्या paste करना है | bot token | सिर्फ client ID | client ID + secret |
+| Google verification | नहीं | नहीं | नहीं |
+| Browser बंद हो तो | — | नहीं चलेगा (1 घंटे का token) | चलेगा |
+| Server पर secret | bot token | कुछ नहीं | client secret + refresh token |
+| Phone पर HTTPS | ज़रूरी नहीं | ज़रूरी | ज़रूरी |
+
+### बदलाव कहाँ से होगा — और कहाँ से नहीं
+
+- Credentials **सिर्फ उसी computer से** save होते हैं (loopback)। Wi-Fi पर मौजूद phone इन्हें बदल नहीं सकता, और token कभी पढ़ भी नहीं सकता।
+- **भेजना/upload करना** phone से भी चलता है, क्योंकि गंतव्य पहले से तय है और token server पर ही रहता है। स्पैम से बचने के लिए 20 कॉल/मिनट की सीमा है।
+
 ## मेरे 11 drafts और PIN?
 
 कुछ नहीं मिटेगा — ये browser की `localStorage` में हैं, server पर नहीं। लेकिन ये **exact address (origin)** से जुड़े हैं: `file://.../index.html` या किसी दूसरे preview URL से `http://localhost:3000` पर जाने पर नया खाली workspace दिख सकता है; पुराना data उसी पुराने address पर सुरक्षित है। जिस address पर 11 drafts दिखते हैं, उसी पर server चलाकर वहीं खोलें। नए address पर PIN दोबारा सेट करना पड़ सकता है — normal है।
@@ -145,13 +194,15 @@ Model नाम बदलते रहते हैं — अपने provider
 - Key बिलेबल हो सकती है; बिना authentication/HTTPS के server को public internet पर न रखें।
 - हर chat request आपका message + हाल की बातें provider को भेजती है; drafts/tasks/notes अपने आप नहीं जाते। Confidential data न डालें।
 - Local PIN सिर्फ browser की सुविधा है, account security नहीं।
-- इस demo में Google Drive / email / external sending का code ही नहीं है — API key से भी ये नहीं जुड़ेगा।
+- Google Drive / external sending का code अब है, पर **opt-in**: जब तक आप खुद Telegram या Drive connect नहीं करते, कुछ भी बाहर नहीं जाता। AI की API key इनसे जुड़ी नहीं है — दोनों अलग चीज़ें हैं। बिना HTTPS के public internet पर इस server को न रखें।
 
 ## सत्यापन (इस session में चेक किया गया)
 
 - `npm start` → `Jenni is listening on http://0.0.0.0:3000` + `AI provider not configured. Add server-side settings to .env.`
 - `GET /api/health` → `{"configured":false,"transcriptionConfigured":false,"model":"gpt-4o-mini"}` — यानी server मिल रहा है, सिर्फ key बाकी है।
-- `npm test` → **7/7 pass**। कोई code बदलने की ज़रूरत नहीं।
+- `npm test` → **27/27 pass** (17 मूल + 10 connections वाले)।
+- `GET /api/connections` → सिर्फ flags और mode लौटाता है, कोई token नहीं।
+- `POST /api/connections/telegram/send` बिना setup → `400 TELEGRAM_NOT_CONFIGURED`; गलत client ID → `400 DRIVE_CLIENT_SHAPE`।
 
 ## संदर्भ
 

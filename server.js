@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const providers = require('./public/providers.js');
+const { createConnections, ConnectionError } = require('./connections.js');
 
 const ROOT = __dirname;
 const JSON_LIMIT_BYTES = 128 * 1024;
@@ -333,6 +334,8 @@ function createAppServer({ env = process.env } = {}) {
   // Re-read on every request so an API Room save applies without a restart.
   const currentConfig = () => resolveConfig(env);
   const allowAiRequest = createRateLimiter();
+  const allowConnector = createRateLimiter({ limit: 20, windowMs: 60_000 });
+  const connections = createConnections({ storageDir: STORAGE_DIR, requestIsLocal });
   const files = {
     '/': ['index.html', 'text/html; charset=utf-8'],
     '/index.html': ['index.html', 'text/html; charset=utf-8'],
@@ -452,6 +455,78 @@ function createAppServer({ env = process.env } = {}) {
         }
       }
 
+      /* --------------------------------------------------------- Connections */
+      if (pathname === '/api/connections' && req.method === 'GET') {
+        return jsonResponse(res, 200, { ...connections.status(), canEdit: requestIsLocal(req) });
+      }
+
+      if (pathname === '/api/connections' && req.method === 'DELETE') {
+        const removed = connections.clearAll();
+        return jsonResponse(res, 200, { cleared: removed, ...connections.status() });
+      }
+
+      /* ---- Telegram ---- */
+      if (pathname === '/api/connections/telegram/chats' && req.method === 'POST') {
+        if (!allowConnector(req)) return jsonResponse(res, 429, { error: { code: 'APP_RATE_LIMITED', message: 'Too many attempts. Wait a minute.' } });
+        const body = await readBody(req, 16 * 1024).catch(() => Buffer.from('{}'));
+        const payload = JSON.parse(body.toString('utf8') || '{}');
+        const chats = await connections.findChats(payload.botToken);
+        return jsonResponse(res, 200, { chats });
+      }
+
+      if (pathname === '/api/connections/telegram' && req.method === 'POST') {
+        const body = await readBody(req, 16 * 1024);
+        const payload = JSON.parse(body.toString('utf8') || '{}');
+        const saved = await connections.saveTelegram(req, payload);
+        return jsonResponse(res, 200, { saved: true, telegram: saved });
+      }
+
+      if (pathname === '/api/connections/telegram/test' && req.method === 'POST') {
+        return jsonResponse(res, 200, await connections.testTelegram(req));
+      }
+
+      if (pathname === '/api/connections/telegram' && req.method === 'DELETE') {
+        return jsonResponse(res, 200, connections.disconnectTelegram(req));
+      }
+
+      if (pathname === '/api/connections/telegram/send' && req.method === 'POST') {
+        if (!allowConnector(req)) return jsonResponse(res, 429, { error: { code: 'APP_RATE_LIMITED', message: 'Too many messages. Wait a minute.' } });
+        const body = await readBody(req, JSON_LIMIT_BYTES);
+        const payload = JSON.parse(body.toString('utf8') || '{}');
+        return jsonResponse(res, 200, await connections.sendTelegram(payload));
+      }
+
+      /* ---- Google Drive ---- */
+      if (pathname === '/api/connections/drive' && req.method === 'POST') {
+        const body = await readBody(req, 16 * 1024);
+        const payload = JSON.parse(body.toString('utf8') || '{}');
+        return jsonResponse(res, 200, { saved: true, drive: connections.saveDrive(req, payload) });
+      }
+
+      if (pathname === '/api/connections/drive/code' && req.method === 'POST') {
+        const body = await readBody(req, 16 * 1024);
+        const payload = JSON.parse(body.toString('utf8') || '{}');
+        return jsonResponse(res, 200, { connected: true, drive: await connections.exchangeDriveCode(req, payload) });
+      }
+
+      if (pathname === '/api/connections/drive/upload' && req.method === 'POST') {
+        if (!allowConnector(req)) return jsonResponse(res, 429, { error: { code: 'APP_RATE_LIMITED', message: 'Too many uploads. Wait a minute.' } });
+        const body = await readBody(req, JSON_LIMIT_BYTES);
+        const payload = JSON.parse(body.toString('utf8') || '{}');
+        return jsonResponse(res, 200, await connections.uploadToDrive(payload));
+      }
+
+      if (pathname === '/api/connections/drive/files' && req.method === 'GET') {
+        if (!allowConnector(req)) return jsonResponse(res, 429, { error: { code: 'APP_RATE_LIMITED', message: 'Too many requests. Wait a minute.' } });
+        return jsonResponse(res, 200, await connections.listDrive());
+      }
+
+      if (pathname === '/api/connections/drive' && req.method === 'DELETE') {
+        return jsonResponse(res, 200, connections.disconnectDrive(req));
+      }
+
+      /* ---- static ---- */
+
       /* ---- provider presets for the form ---- */
       if (pathname === '/api/providers' && req.method === 'GET') {
         return jsonResponse(res, 200, { presets: providers.PRESETS });
@@ -546,10 +621,11 @@ function createAppServer({ env = process.env } = {}) {
       return res.end('Not found');
     } catch (error) {
       if (res.headersSent || res.destroyed) return;
-      const status = error instanceof HttpError ? error.status : 500;
-      const code = error instanceof HttpError ? error.code : 'INTERNAL_ERROR';
-      const message = error instanceof HttpError ? error.message : 'The server could not complete this request.';
-      if (!(error instanceof HttpError)) console.error('Request failed:', error.message);
+      const known = error instanceof HttpError || error instanceof ConnectionError;
+      const status = known ? error.status : 500;
+      const code = known ? error.code : 'INTERNAL_ERROR';
+      const message = known ? error.message : 'The server could not complete this request.';
+      if (!known) console.error('Request failed:', error.message);
       return jsonResponse(res, status, { error: { code, message } });
     }
   });
@@ -595,3 +671,5 @@ module.exports = {
   SETTINGS_FILE,
   STORAGE_DIR
 };
+
+module.exports.ConnectionError = ConnectionError;

@@ -231,6 +231,15 @@
             </span>
             <span class="tool__arrow" aria-hidden="true">›</span>
           </button>
+
+          <button type="button" class="tool drawer-toggle-btn" data-drawer="drawer-connections" aria-expanded="false" aria-controls="drawer-connections">
+            <span class="tool__icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14.5 3.5 12 6l2.5 2.5L17 6z" stroke-linejoin="round"/><path d="M4.5 13 10 7.5l6.5 6.5-5.5 5.5z" stroke-linejoin="round"/><path d="M15.5 15.5 21 10" stroke-linecap="round"/></svg></span>
+            <span class="tool__text">
+              <span class="tool__name">Send &amp; save elsewhere</span>
+              <span class="tool__hint" id="connectionsHint">Telegram · Drive</span>
+            </span>
+            <span class="tool__arrow" aria-hidden="true">›</span>
+          </button>
         </div>
       </aside>
     </section>
@@ -243,10 +252,10 @@
         <div class="drawer__head">
           <div>
             <h2>Local drafts</h2>
-            <p class="drawer__sub">Stored in this browser. No cloud drive is connected, and nothing is uploaded.</p>
+            <p class="drawer__sub">Stored in this browser first. Telegram ya Drive par bhejna ho to <strong>Send &amp; save elsewhere</strong> kholo.</p>
           </div>
           <div class="field-row">
-            <span class="tag">Cloud drive: not connected</span>
+            <span class="tag">Local first</span>
             <button type="button" id="btnDownloadLastDoc" class="btn btn--small"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 19h14" stroke-linecap="round" stroke-linejoin="round"/></svg>Download .md</button>
           </div>
         </div>
@@ -426,6 +435,144 @@
             <p><strong>What leaves this browser:</strong> your message text and the recent turns of this chat go to the configured AI provider. Jenni’s server does not store chat history.</p>
             <p><strong>What stays local:</strong> drafts, tasks, notes and the PIN. They are not attached to a request automatically.</p>
             <p><strong>Not connected:</strong> Google Drive, email and any remote sending. Saving a reply creates a local draft only. The PIN is convenience, not account security.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================ CONNECTIONS (3 options) -->
+      <div id="drawer-connections" class="drawer drawer-panel">
+        <div class="drawer__head">
+          <div>
+            <h2>Send &amp; save elsewhere</h2>
+            <p class="drawer__sub">Teen alag-alag options — jo zaroorat ho wahi on karo. Baaki band rehne do.</p>
+          </div>
+          <span id="connectionsBadge" class="tag">Checking…</span>
+        </div>
+
+        <div class="drawer__body">
+          <!-- OPTION 1: TELEGRAM -->
+          <details class="conn" id="connTelegram" open>
+            <summary class="conn__head">
+              <span class="conn__num">1</span>
+              <span class="conn__title">
+                <strong>Telegram</strong>
+                <span class="conn__sub">Sabse aasan — koi OAuth nahi, koi verification nahi</span>
+              </span>
+              <span class="conn__state" id="tgState">not connected</span>
+            </summary>
+            <div class="conn__body">
+              <ol class="steps">
+                <li>Telegram me <strong>@BotFather</strong> kholo → <code>/newbot</code> → naam do.</li>
+                <li>Token copy karo (<code>123456789:ABC…</code>).</li>
+                <li>Apne naye bot ko <strong>koi bhi message</strong> bhejo — "hi" kaafi hai.</li>
+                <li>Yahan token paste karo → <strong>Find my chat</strong> → chat chuno → Save.</li>
+              </ol>
+
+              <label class="label" for="tgToken">Bot token</label>
+              <div class="key-row">
+                <input class="field mono" id="tgToken" type="password" spellcheck="false" autocomplete="off" placeholder="123456789:ABC…">
+                <button type="button" class="btn btn--small" id="btnTgReveal" aria-label="Show or hide the bot token">👁</button>
+              </div>
+
+              <div class="room-actions">
+                <button type="button" class="btn" id="btnTgFind">Find my chat</button>
+                <button type="button" class="btn btn--primary" id="btnTgSave">Save &amp; test</button>
+                <button type="button" class="btn btn--ghost" id="btnTgDisconnect">Disconnect</button>
+              </div>
+
+              <select class="field hidden" id="tgChatSelect" aria-label="Choose your Telegram chat"></select>
+              <p class="room-result" id="tgResult" role="status" aria-live="polite"></p>
+              <p class="field-hint">Bot sirf aapke chat me message bhej sakta hai. Token server par rehta hai (<code>storage/connections.json</code>, mode 600) — browser me kabhi wapas nahi aata.</p>
+            </div>
+          </details>
+
+          <!-- OPTION 2: DRIVE (BROWSER) -->
+          <details class="conn" id="connDriveBrowser">
+            <summary class="conn__head">
+              <span class="conn__num">2</span>
+              <span class="conn__title">
+                <strong>Google Drive — browser mode</strong>
+                <span class="conn__sub">Sirf client ID · <code>drive.file</code> · no verification</span>
+              </span>
+              <span class="conn__state" id="driveBrowserState">off</span>
+            </summary>
+            <div class="conn__body">
+              <ol class="steps">
+                <li>Google Cloud → naya project → <strong>Google Drive API</strong> enable karo.</li>
+                <li>OAuth consent screen → External → apna email test user me daalo.</li>
+                <li>Credentials → <strong>OAuth client ID</strong> → Web application.</li>
+                <li>Authorized JavaScript origin: <code>http://localhost:3000</code></li>
+                <li>Client ID copy karke niche paste karo.</li>
+              </ol>
+
+              <label class="label" for="driveClientId">OAuth client ID</label>
+              <input class="field mono" id="driveClientId" spellcheck="false" placeholder="…apps.googleusercontent.com">
+
+              <div class="room-actions">
+                <button type="button" class="btn btn--primary" id="btnDriveSaveId">Save client ID</button>
+                <button type="button" class="btn" id="btnDriveConnect">Connect Google</button>
+                <button type="button" class="btn btn--ghost" id="btnDriveDisconnect">Disconnect</button>
+              </div>
+
+              <p class="room-result" id="driveResult" role="status" aria-live="polite"></p>
+              <p class="field-hint">App sirf wahi files dekh sakta hai jo woh khud banaye. Poora Drive search nahi hota — uske liye Google ki verification chahiye. Phone se chalane ke liye HTTPS tunnel zaroori hai.</p>
+            </div>
+          </details>
+
+          <!-- OPTION 3: DRIVE (SERVER) -->
+          <details class="conn" id="connDriveServer">
+            <summary class="conn__head">
+              <span class="conn__num">3</span>
+              <span class="conn__title">
+                <strong>Google Drive — server mode</strong>
+                <span class="conn__sub">Background sync · refresh token · HTTPS chahiye</span>
+              </span>
+              <span class="conn__state" id="driveServerState">off</span>
+            </summary>
+            <div class="conn__body">
+              <ol class="steps">
+                <li>Option 2 wala client ID + <strong>client secret</strong> bhi copy karo.</li>
+                <li>Redirect URI register karo, jaise <code>https://your-tunnel.example/oauth2callback</code>.</li>
+                <li>Niche woh redirect URI daal ke <strong>Show Google link</strong> dabao.</li>
+                <li>Link kholo → allow karo → browser ka URL copy karo (usme <code>?code=</code> hoga).</li>
+                <li>Woh code yahan paste karke <strong>Finish connection</strong> dabao.</li>
+              </ol>
+
+              <label class="label" for="driveClientSecret">Client secret</label>
+              <input class="field mono" id="driveClientSecret" type="password" spellcheck="false" placeholder="GOCSPX-…">
+
+              <label class="label" for="driveRedirectUri">Redirect URI</label>
+              <input class="field mono" id="driveRedirectUri" spellcheck="false" placeholder="https://your-tunnel.example/oauth2callback">
+
+              <div class="room-actions">
+                <button type="button" class="btn" id="btnDriveShowLink">Show Google link</button>
+                <button type="button" class="btn btn--primary" id="btnDriveExchange">Finish connection</button>
+              </div>
+
+              <p class="field-hint hidden" id="driveAuthLinkWrap">Is link ko kholo: <a id="driveAuthLink" href="#" target="_blank" rel="noopener noreferrer">Google authorization</a></p>
+
+              <label class="label" for="driveCode">?code= value (redirect URL se)</label>
+              <input class="field mono" id="driveCode" spellcheck="false" placeholder="4/0AY0e-g7…">
+
+              <p class="room-result" id="driveServerResult" role="status" aria-live="polite"></p>
+              <p class="field-hint">Server mode = browser band hone ke baad bhi upload chal sakta hai. Iska matlab Google ka refresh token disk par rehta hai — bilkul API key jaisa treat karo.</p>
+            </div>
+          </details>
+
+          <!-- actions that use whatever is connected -->
+          <div class="conn-actions">
+            <h3 class="readiness__title">Use it</h3>
+            <div class="field-row">
+              <input class="field" id="sendTargetTitle" placeholder="Title (optional)">
+              <button type="button" class="btn" id="btnSendTelegram">📤 Send draft to Telegram</button>
+            </div>
+            <div class="field-row">
+              <button type="button" class="btn" id="btnUploadDrive">☁️ Upload draft to Drive (server)</button>
+              <button type="button" class="btn" id="btnRefreshDrive">↻ List Drive files</button>
+            </div>
+            <p class="room-result" id="connActionResult" role="status" aria-live="polite"></p>
+            <div id="driveFileList" class="list" style="max-height:180px"></div>
+            <p class="field-hint">Jo draft editor me khula hai wahi bheja/upload hoga. Telegram message 3900 characters tak, Drive upload 2 MB tak.</p>
           </div>
         </div>
       </div>

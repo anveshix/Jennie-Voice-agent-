@@ -36,7 +36,12 @@
     transcriptionController: null,
     discardRecording: false,
     isTranscribing: false,
-    isStartingRecording: false
+    isStartingRecording: false,
+    roomInfo: null,
+    roomPreset: 'custom',
+    connections: null,
+    driveToken: null,
+    gisPromise: null
   };
 
   const $ = (id) => document.getElementById(id);
@@ -1055,6 +1060,399 @@
     });
   }
 
+
+  /* ---------------------------------------------------------- Connections */
+
+  const CONN_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+  function setConnResult(id, text, kind) {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = `room-result${kind ? ` is-${kind}` : ''}`;
+  }
+
+  function stateBadge(el, mode, labels) {
+    if (!el) return;
+    el.textContent = labels[mode] || mode;
+    el.className = `conn__state${mode === 'on' ? ' is-on' : (mode === 'part' ? ' is-part' : '')}`;
+  }
+
+  async function connRequest(path, options = {}) {
+    const response = await fetch(path, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
+      ...options
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error((payload && payload.error && payload.error.message) || `Request failed (HTTP ${response.status}).`);
+    }
+    return payload;
+  }
+
+  async function loadConnections(quiet) {
+    try {
+      const info = await connRequest('/api/connections');
+      state.connections = info;
+      paintConnections(info);
+      return info;
+    } catch (error) {
+      paintConnections(null);
+      if (!quiet) setConnResult('connActionResult', 'Server se connections nahi mile. `npm start` chal raha hai?', 'error');
+      return null;
+    }
+  }
+
+  function paintConnections(info) {
+    const tg = info && info.telegram;
+    const drive = info && info.drive;
+
+    stateBadge($('tgState'), !tg ? 'off' : (tg.configured ? 'on' : (tg.tokenSet ? 'part' : 'off')),
+      { on: 'connected', part: 'chat missing', off: 'not connected' });
+    if (tg && tg.configured && tg.chatId) {
+      const sel = $('tgChatSelect');
+      if (sel && !sel.options.length) {
+        sel.innerHTML = `<option value="${escapeHtml(tg.chatId)}">${escapeHtml(tg.chatId)} (saved)</option>`;
+        sel.classList.remove('hidden');
+      }
+    }
+
+    const browserOn = Boolean(drive && drive.browserReady);
+    const serverOn = Boolean(drive && drive.serverReady);
+    stateBadge($('driveBrowserState'), browserOn ? 'on' : 'off', { on: 'ready', off: 'off' });
+    stateBadge($('driveServerState'), serverOn ? 'on' : (drive && drive.hasClientSecret ? 'part' : 'off'),
+      { on: 'authorized', part: 'code needed', off: 'off' });
+
+    if (drive && drive.clientId && !$('driveClientId').value) $('driveClientId').value = drive.clientId;
+    if (drive && drive.account) setConnResult('driveServerResult', `Connected as ${drive.account}`, 'ok');
+    if (drive && drive.mode === 'server' && drive.hasRefreshToken) {
+      setConnResult('driveResult', 'Server mode active — Drive uploads server se honge.', 'ok');
+    }
+
+    const badge = $('connectionsBadge');
+    const hint = $('connectionsHint');
+    const parts = [];
+    if (tg && tg.configured) parts.push('Telegram');
+    if (browserOn || serverOn) parts.push('Drive');
+    if (badge) badge.textContent = parts.length ? parts.join(' + ') : 'Nothing connected';
+    if (hint) hint.textContent = parts.length ? parts.join(' · ') : 'Telegram · Drive';
+  }
+
+  /* ---- Telegram ---- */
+  async function findTelegramChats() {
+    const token = $('tgToken').value.trim();
+    if (!token) { setConnResult('tgResult', 'Pehle bot token paste karo.', 'error'); return; }
+    setConnResult('tgResult', 'Telegram se chats dhoond rahe hain…', 'busy');
+    try {
+      const data = await connRequest('/api/connections/telegram/chats', {
+        method: 'POST',
+        body: JSON.stringify({ botToken: token })
+      });
+      const chats = data.chats || [];
+      const select = $('tgChatSelect');
+      if (!chats.length) {
+        setConnResult('tgResult', 'Koi chat nahi mili. Apne bot ko Telegram me ek message bhejo, phir dobara dabao.', 'error');
+        return;
+      }
+      select.innerHTML = chats.map((c) =>
+        `<option value="${escapeHtml(c.id)}">${escapeHtml(c.label)}${c.username ? ` · ${escapeHtml(c.username)}` : ''} — ${escapeHtml(c.type)}</option>`
+      ).join('');
+      select.classList.remove('hidden');
+      setConnResult('tgResult', `${chats.length} chat mili. Chuno aur “Save & test” dabao.`, 'ok');
+    } catch (error) {
+      setConnResult('tgResult', error.message, 'error');
+    }
+  }
+
+  async function saveTelegram() {
+    const token = $('tgToken').value.trim();
+    const select = $('tgChatSelect');
+    const chatId = select && !select.classList.contains('hidden') ? select.value : (state.connections?.telegram?.chatId || '');
+    if (!chatId) { setConnResult('tgResult', 'Pehle “Find my chat” dabao aur chat chuno.', 'error'); return; }
+    setConnResult('tgResult', 'Save karke test bhej rahe hain…', 'busy');
+    try {
+      await connRequest('/api/connections/telegram', {
+        method: 'POST',
+        body: JSON.stringify({ botToken: token, chatId })
+      });
+      $('tgToken').value = '';
+      setConnResult('tgResult', 'Ho gaya — Telegram par test message bheja. Check karo!', 'ok');
+      await loadConnections(true);
+    } catch (error) {
+      setConnResult('tgResult', error.message, 'error');
+    }
+  }
+
+  async function disconnectTelegram() {
+    setConnResult('tgResult', 'Removing…', 'busy');
+    try {
+      await connRequest('/api/connections/telegram', { method: 'DELETE' });
+      $('tgChatSelect').innerHTML = '';
+      $('tgChatSelect').classList.add('hidden');
+      setConnResult('tgResult', 'Telegram disconnected.', 'ok');
+      await loadConnections(true);
+    } catch (error) {
+      setConnResult('tgResult', error.message, 'error');
+    }
+  }
+
+  /* ---- Drive: browser mode ---- */
+  function loadGis() {
+    if (window.google && window.google.accounts && window.google.accounts.oauth2) return Promise.resolve(true);
+    if (state.gisPromise) return state.gisPromise;
+    state.gisPromise = new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+    return state.gisPromise;
+  }
+
+  async function saveDriveClientId() {
+    const clientId = $('driveClientId').value.trim();
+    if (!clientId) { setConnResult('driveResult', 'Client ID paste karo.', 'error'); return; }
+    setConnResult('driveResult', 'Saving…', 'busy');
+    try {
+      await connRequest('/api/connections/drive', {
+        method: 'POST',
+        body: JSON.stringify({ clientId, mode: 'browser' })
+      });
+      setConnResult('driveResult', 'Client ID save ho gaya. Ab “Connect Google” dabao.', 'ok');
+      await loadConnections(true);
+    } catch (error) {
+      setConnResult('driveResult', error.message, 'error');
+    }
+  }
+
+  async function connectDriveBrowser() {
+    const clientId = ($('driveClientId').value || '').trim() || (state.connections?.drive?.clientId || '');
+    if (!clientId) { setConnResult('driveResult', 'Pehle client ID save karo.', 'error'); return; }
+    setConnResult('driveResult', 'Google khul raha hai…', 'busy');
+    const loaded = await loadGis();
+    if (!loaded) { setConnResult('driveResult', 'Google script load nahi hui — internet ya ad-blocker check karo.', 'error'); return; }
+
+    try {
+      const tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: CONN_DRIVE_SCOPE,
+        callback: () => {}   // replaced per request below
+      });
+      tokenClient.callback = async (response) => {
+        if (response.error) {
+          setConnResult('driveResult', `Google ne mana kiya: ${response.error}`, 'error');
+          return;
+        }
+        state.driveToken = { token: response.access_token, expiresAt: Date.now() + (Number(response.expires_in || 3600) * 1000) };
+        setConnResult('driveResult', 'Google connected (1 ghanta). Ab draft “Upload” kar sakte ho.', 'ok');
+      };
+      tokenClient.requestAccessToken({ prompt: '' });
+    } catch (error) {
+      setConnResult('driveResult', error.message, 'error');
+    }
+  }
+
+  /** Create one file in My Drive with the in-browser token (drive.file scope). */
+  async function uploadDriveBrowser(title, content) {
+    const token = state.driveToken && state.driveToken.expiresAt > Date.now() ? state.driveToken.token : '';
+    if (!token) { setConnResult('connActionResult', 'Browser Drive session nahi hai — “Connect Google” dabao.', 'error'); return; }
+    const name = `${title || 'Jenni draft'}.md`;
+    const metadata = { name, mimeType: 'text/markdown' };
+    const boundary = 'jenni' + Date.now().toString(36);
+    const body = [
+      `--${boundary}`, 'Content-Type: application/json; charset=UTF-8', '', JSON.stringify(metadata),
+      `--${boundary}`, 'Content-Type: text/markdown; charset=UTF-8', '', content,
+      `--${boundary}--`, ''
+    ].join('\r\n');
+
+    setConnResult('connActionResult', 'Drive par upload ho raha hai…', 'busy');
+    try {
+      const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+        body
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error((payload && payload.error && payload.error.message) || `HTTP ${response.status}`);
+      setConnResult('connActionResult', `Drive par save: ${payload.name}${payload.webViewLink ? ` — ${payload.webViewLink}` : ''}`, 'ok');
+    } catch (error) {
+      setConnResult('connActionResult', `Drive upload fail: ${error.message}`, 'error');
+    }
+  }
+
+  /* ---- Drive: server mode ---- */
+  async function saveDriveServer() {
+    const clientId = $('driveClientId').value.trim();
+    const clientSecret = $('driveClientSecret').value.trim();
+    if (!clientId || !clientSecret) { setConnResult('driveServerResult', 'Client ID aur secret dono chahiye.', 'error'); return; }
+    setConnResult('driveServerResult', 'Saving…', 'busy');
+    try {
+      await connRequest('/api/connections/drive', {
+        method: 'POST',
+        body: JSON.stringify({ clientId, clientSecret, mode: 'server' })
+      });
+      setConnResult('driveServerResult', 'Saved. Ab “Show Google link” dabao.', 'ok');
+      await loadConnections(true);
+    } catch (error) {
+      setConnResult('driveServerResult', error.message, 'error');
+    }
+  }
+
+  async function showDriveAuthLink() {
+    const clientId = $('driveClientId').value.trim() || (state.connections?.drive?.clientId || '');
+    const redirectUri = $('driveRedirectUri').value.trim();
+    if (!clientId) { setConnResult('driveServerResult', 'Pehle client ID daalo.', 'error'); return; }
+    if (!redirectUri) { setConnResult('driveServerResult', 'Redirect URI daalo (jaise https://your-tunnel.example/oauth2callback).', 'error'); return; }
+    const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    url.searchParams.set('client_id', clientId);
+    url.searchParams.set('redirect_uri', redirectUri);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', CONN_DRIVE_SCOPE);
+    url.searchParams.set('access_type', 'offline');
+    url.searchParams.set('prompt', 'consent');
+    const link = $('driveAuthLink');
+    link.href = url.toString();
+    $('driveAuthLinkWrap').classList.remove('hidden');
+    setConnResult('driveServerResult', 'Link ban gaya — kholo, allow karo, phir redirect URL ka ?code= copy karo.', 'ok');
+  }
+
+  async function finishDriveConnection() {
+    const code = $('driveCode').value.trim();
+    const redirectUri = $('driveRedirectUri').value.trim();
+    if (!code) { setConnResult('driveServerResult', '?code= value paste karo.', 'error'); return; }
+    if (!redirectUri) { setConnResult('driveServerResult', 'Redirect URI wahi daalo jo Google Cloud me register kiya tha.', 'error'); return; }
+    setConnResult('driveServerResult', 'Google se token le rahe hain…', 'busy');
+    try {
+      await connRequest('/api/connections/drive/code', {
+        method: 'POST',
+        body: JSON.stringify({ code, redirectUri })
+      });
+      $('driveCode').value = '';
+      setConnResult('driveServerResult', 'Server Drive connected — ab background upload chalega.', 'ok');
+      await loadConnections(true);
+    } catch (error) {
+      setConnResult('driveServerResult', error.message, 'error');
+    }
+  }
+
+  async function disconnectDrive() {
+    setConnResult('driveResult', 'Removing…', 'busy');
+    try {
+      await connRequest('/api/connections/drive', { method: 'DELETE' });
+      state.driveToken = null;
+      setConnResult('driveResult', 'Drive disconnected.', 'ok');
+      setConnResult('driveServerResult', '', '');
+      await loadConnections(true);
+    } catch (error) {
+      setConnResult('driveResult', error.message, 'error');
+    }
+  }
+
+  /* ---- actions that use the open draft ---- */
+  function currentDraft() {
+    const title = ($('activeDocTitleInput')?.value || '').trim() || 'Jenni draft';
+    const content = ($('activeDocContentArea')?.value || '').trim();
+    return { title, content };
+  }
+
+  async function sendDraftToTelegram() {
+    const { title, content } = currentDraft();
+    if (!content) { setConnResult('connActionResult', 'Draft editor khaali hai — pehle kuch likho ya draft chuno.', 'error'); return; }
+    const customTitle = ($('sendTargetTitle')?.value || '').trim();
+    const heading = customTitle || title;
+    // Plain text on purpose: parse_mode skipped so Markdown in the draft never breaks the send.
+    const text = heading ? `${heading}\n\n${content}` : content;
+    setConnResult('connActionResult', 'Telegram par bhej rahe hain…', 'busy');
+    try {
+      const result = await connRequest('/api/connections/telegram/send', {
+        method: 'POST',
+        body: JSON.stringify({ text })
+      });
+      setConnResult('connActionResult', `Bhej diya (${result.sentChars} characters). Telegram check karo.`, 'ok');
+    } catch (error) {
+      setConnResult('connActionResult', error.message, 'error');
+    }
+  }
+
+  async function uploadDraftToDrive() {
+    const { title, content } = currentDraft();
+    if (!content) { setConnResult('connActionResult', 'Draft editor khaali hai.', 'error'); return; }
+    const customTitle = ($('sendTargetTitle')?.value || '').trim() || title;
+
+    if (state.connections?.drive?.serverReady) {
+      setConnResult('connActionResult', 'Server se Drive par upload ho raha hai…', 'busy');
+      try {
+        const result = await connRequest('/api/connections/drive/upload', {
+          method: 'POST',
+          body: JSON.stringify({ name: `${customTitle}.md`, content })
+        });
+        setConnResult('connActionResult', `Drive par save: ${result.name}${result.link ? ` — ${result.link}` : ''}`, 'ok');
+      } catch (error) {
+        setConnResult('connActionResult', error.message, 'error');
+      }
+      return;
+    }
+    await uploadDriveBrowser(customTitle, content);
+  }
+
+  async function refreshDriveFiles() {
+    setConnResult('connActionResult', 'Drive files laa rahe hain…', 'busy');
+    try {
+      const result = await connRequest('/api/connections/drive/files');
+      const list = $('driveFileList');
+      const files = result.files || [];
+      list.innerHTML = files.length
+        ? files.map((f) => `
+            <a class="card-row" href="${escapeHtml(f.webViewLink || '#')}" target="_blank" rel="noopener noreferrer">
+              <span class="card-row__icon" aria-hidden="true">📄</span>
+              <span style="min-width:0;flex:1">
+                <span class="card-row__title">${escapeHtml(f.name || 'Untitled')}</span>
+                <span class="card-row__meta">${escapeHtml((f.modifiedTime || '').slice(0, 10))}</span>
+              </span>
+            </a>`).join('')
+        : '<p class="prose">Koi file nahi mili (ya server mode authorized nahi hai).</p>';
+      setConnResult('connActionResult', `${files.length} file mili.`, 'ok');
+    } catch (error) {
+      setConnResult('connActionResult', error.message, 'error');
+    }
+  }
+
+  function bindConnectionEvents() {
+    $('btnTgFind')?.addEventListener('click', findTelegramChats);
+    $('btnTgSave')?.addEventListener('click', saveTelegram);
+    $('btnTgDisconnect')?.addEventListener('click', disconnectTelegram);
+    $('btnTgReveal')?.addEventListener('click', () => {
+      const input = $('tgToken');
+      input.type = input.type === 'password' ? 'text' : 'password';
+    });
+
+    $('btnDriveSaveId')?.addEventListener('click', saveDriveClientId);
+    $('btnDriveConnect')?.addEventListener('click', connectDriveBrowser);
+    $('btnDriveDisconnect')?.addEventListener('click', disconnectDrive);
+
+    $('btnDriveShowLink')?.addEventListener('click', async () => {
+      if ($('driveClientSecret')?.value.trim()) await saveDriveServer();
+      await showDriveAuthLink();
+    });
+    $('btnDriveExchange')?.addEventListener('click', finishDriveConnection);
+    $('connDriveServer')?.addEventListener('toggle', () => {
+      const drive = state.connections && state.connections.drive;
+      if ($('connDriveServer').open && drive && drive.clientId && !$('driveClientId').value) {
+        $('driveClientId').value = drive.clientId;
+      }
+    });
+
+    $('btnSendTelegram')?.addEventListener('click', sendDraftToTelegram);
+    $('btnUploadDrive')?.addEventListener('click', uploadDraftToDrive);
+    $('btnRefreshDrive')?.addEventListener('click', refreshDriveFiles);
+
+    const connTool = document.querySelector('[data-drawer="drawer-connections"]');
+    connTool?.addEventListener('click', () => loadConnections(true));
+  }
+
   function setComposerBusy(busy) {
     const input = $('botCommandInput');
     const button = $('botSendButton');
@@ -1621,6 +2019,8 @@
     updatePinLockInstructions();
     startAmbientMotion();
     bindRoomEvents();
+    bindConnectionEvents();
+    loadConnections(true);
     updateReadiness();
     loadRoomSettings(true);
     appendMessage('jenni', 'Hi! Ask me anything by typing or tapping the microphone. I use the AI provider configured on this server; drafts, tasks and notes stay in this browser.');
