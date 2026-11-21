@@ -20,10 +20,20 @@
 
   const PRESETS = {
     groq: { label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', model: 'openai/gpt-oss-120b', transcribe: 'whisper-large-v3-turbo', keyUrl: 'https://console.groq.com/keys', modelsUrl: 'https://console.groq.com/docs/models' },
-    gemini: { label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.8-flash', transcribe: '', keyUrl: 'https://aistudio.google.com/app/apikey', modelsUrl: 'https://ai.google.dev/gemini-api/docs/models' },
+    gemini: { label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.5-flash', transcribe: '', keyUrl: 'https://aistudio.google.com/app/apikey', modelsUrl: 'https://ai.google.dev/gemini-api/docs/models' },
     openai: { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.4-mini', transcribe: 'whisper-1', keyUrl: 'https://platform.openai.com/api-keys', modelsUrl: 'https://platform.openai.com/docs/models' },
     openrouter: { label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-oss-120b:free', transcribe: '', keyUrl: 'https://openrouter.ai/keys', modelsUrl: 'https://openrouter.ai/models' },
     custom: { label: 'Custom', baseUrl: '', model: '', transcribe: '', keyUrl: '', modelsUrl: '' }
+  };
+
+  /* Model IDs this app used to ship as preset defaults. A saved config that
+     still points at one of these was never chosen by hand, so it is safe to
+     move it to the current default — a model the user typed is left alone. */
+  const RETIRED_DEFAULTS = {
+    groq: ['llama-3.3-70b-versatile', 'llama3-70b-8192', 'llama-3.1-8b-instant'],
+    gemini: ['gemini-2.0-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash'],
+    openai: ['gpt-4o-mini', 'gpt-5-mini'],
+    openrouter: ['openai/gpt-4o-mini', 'openai/gpt-4o-mini:free']
   };
 
   const SEC = window.JENNI_SECURITY || {};
@@ -147,6 +157,25 @@
       return true;
     }
     return writeJson(LS.config, cfg);
+  }
+
+  /**
+   * If the saved config still uses a model id that this app shipped as a
+   * preset default (and has since replaced), move it to the current default.
+   * Returns the new model name when it changed, otherwise null.
+   */
+  function migratePresetModel() {
+    const cfg = state.cfg;
+    if (!cfg || !cfg.model || !cfg.provider) return null;
+    const retired = RETIRED_DEFAULTS[cfg.provider];
+    const preset = PRESETS[cfg.provider];
+    if (!retired || !preset || !preset.model) return null;
+    if (!retired.includes(cfg.model)) return null;
+    if (preset.model === cfg.model) return null;
+    const next = Object.assign({}, cfg, { model: preset.model });
+    saveConfig(next);
+    if (typeof paintSetupStatus === 'function') paintSetupStatus();
+    return preset.model;
   }
 
   function providerName() {
@@ -1453,6 +1482,9 @@
     setStatus('ok', providerName() + ' · ' + cfg.model);
     startAutoLock();
     paintSecurity();
+    // a config unlocked from the vault may still hold an old preset default
+    const migrated = migratePresetModel();
+    if (migrated) toast(`Model update: ${migrated}`, false);
   }
 
   function startAutoLock() {
@@ -2120,6 +2152,10 @@
     security.idleMs = lockPrefs.idleMs;
     security.lockOnHide = lockPrefs.lockOnHide;
     security.lock = SEC.createLock ? SEC.createLock({ idleMs: security.idleMs }) : null;
+
+    // move a previously-shipped default model to today's default
+    const migrated = migratePresetModel();
+    if (migrated) setTimeout(() => toast(`Model update: ${migrated}`, false), 900);
 
     // restore the user's voice language and chosen voice
     voice.ttsVoice = pickVoice(voice.lang);
