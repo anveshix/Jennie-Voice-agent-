@@ -30,7 +30,7 @@
     gemini: {
       label: 'Google Gemini',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-      model: 'gemini-3.8-flash',
+      model: 'gemini-3.5-flash',
       transcriptionModel: '',
       keyUrl: 'https://aistudio.google.com/app/apikey',
       note: 'Free tier available. Open-key mode: transcriptions are off, browser speech still works.'

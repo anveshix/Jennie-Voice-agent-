@@ -204,7 +204,9 @@ Bot **voice mode** ka hi doosra button hai — dono ek hi cheez chalate hain. Bo
 
 **सुझाव:** Groq से शुरू करो — free है, जवाब तेज़ आते हैं, और गलती से bill नहीं आएगा।
 
-Model बदलना है? **Setup → Model** में लिखो, या पास वाला **Models list** link दबाओ। आज (Nov 2026) चलने वाले: Groq `openai/gpt-oss-120b`, Gemini `gemini-3.8-flash`, OpenAI `gpt-5.4-mini`, OpenRouter `openai/gpt-oss-120b:free`।
+Model बदलना है? **Setup → Model** में लिखो, या पास वाला **Models list** link दबाओ। आज (Nov 2026) चलने वाले: Groq `openai/gpt-oss-120b`, **Gemini `gemini-3.5-flash`** (app me default), OpenAI `gpt-5.4-mini`, OpenRouter `openai/gpt-oss-120b:free`।
+
+Gemini 3.5 Flash par Google ka note: Gemini API me ये ID deprecated है और requests अपने आप `gemini-3.6-flash` par जाती हैं — error नहीं आता। यानी चलेगा, पर जवाब 3.6 से आएगा। नई model चाहो तो Models list से `gemini-3.8-flash` चुनो।
 
 **`404` आया?** इसका मतलब model बंद हो गया (retired) — key खराब नहीं है। App खुद नए model से दोबारा कोशिश करता है; न हो तो Models list से कोई चालू model चुनो।
 Custom provider? **Setup → Base URL** में अपना OpenAI-compatible endpoint डालो (https होना चाहिए)।

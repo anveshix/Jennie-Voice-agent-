@@ -463,15 +463,38 @@ function submit(window, text) {
   ok(leftovers.length === 0, 'panic wipe leaves no jenni keys', leftovers.join(',') || 'clean');
   b.dom.window.close();
 
+  /* ── Gemini preset + migrating a previously-shipped default ───────────── */
+  b = await boot({ cfg: null });
+  b.window.document.querySelector('#gateBody [data-provider="gemini"]').click();
+  await wait(60);
+  ok(b.$('setupModel').value === 'gemini-3.5-flash', 'Gemini preset is gemini-3.5-flash', b.$('setupModel').value);
+  ok(b.$('setupBase').value.includes('generativelanguage.googleapis.com'), 'Gemini base URL stays the OpenAI-compatible one');
+  b.dom.window.close();
+
+  /* the app used to ship gemini-3.8-flash as the default → it must move by
+     itself, without the user doing anything */
+  b = await boot({ cfg: Object.assign({}, CFG, { provider: 'gemini', model: 'gemini-3.8-flash', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', transcribe: '' }) });
+  const migratedCfg = JSON.parse(b.window.localStorage.getItem('jenni_cfg_v1'));
+  ok(migratedCfg.model === 'gemini-3.5-flash', 'an old gemini-3.8-flash default migrates to 3.5', migratedCfg.model);
+  ok(migratedCfg.apiKey === CFG.apiKey, 'the key survives the migration');
+  b.dom.window.close();
+
+  /* a model the user typed themselves must never be overwritten */
+  b = await boot({ cfg: Object.assign({}, CFG, { provider: 'gemini', model: 'gemini-3.6-flash-pro-experimental', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', transcribe: '' }) });
+  const keptCfg = JSON.parse(b.window.localStorage.getItem('jenni_cfg_v1'));
+  ok(keptCfg.model === 'gemini-3.6-flash-pro-experimental', 'a hand-typed model is left alone', keptCfg.model);
+  b.dom.window.close();
+
   /* ── a retired model id (the 404 people actually hit) ─────────────────── */
   ok(b.$('modelListLink').getAttribute('href').includes('groq.com'), 'setup offers a live Models list link');
   ok(b.$('setupModelListLink') !== null, 'the gate offers the same link');
 
-  /* an old saved model answers 404 → the app retries once with the preset
-     model, remembers it, and says so instead of leaving the user stuck */
+  /* a model that is NOT one of our old defaults (so migration leaves it) but
+     is retired upstream → one retry with the preset model, saved, and said out
+     loud, instead of leaving the user stuck on an error */
   b = await boot({
-    retired: 'llama-3.3-70b-versatile',
-    cfg: Object.assign({}, CFG, { model: 'llama-3.3-70b-versatile' })
+    retired: 'llama-3.1-70b-versatile',
+    cfg: Object.assign({}, CFG, { model: 'llama-3.1-70b-versatile' })
   });
   submit(b.window, 'namaste');
   await wait(700);
