@@ -1091,3 +1091,15 @@ code {
   white-space: nowrap;
 }
 .label-row__link:hover { color: #99f6e4; }
+
+/* document download + retry sit next to Save draft / Copy */
+.msg__tool--doc {
+  color: #5eead4;
+  border-color: rgba(94, 234, 212, .35);
+}
+.msg__tool--doc:hover { background: rgba(94, 234, 212, .12); }
+.msg__tool--retry {
+  color: #fcd34d;
+  border-color: rgba(252, 211, 77, .35);
+}
+.msg__tool--retry:hover { background: rgba(252, 211, 77, .12); }

@@ -50,6 +50,7 @@ function wait(ms) {
 
 async function boot(options = {}) {
   const retired = options.retired || null;
+  const script = options.script ? options.script.slice() : null;
   const dom = new JSDOM(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'), {
     url: 'https://anveshix.github.io/Jennie-Voice-agent-/',
     runScripts: 'outside-only',
@@ -120,6 +121,21 @@ async function boot(options = {}) {
       if (retired && body.model === retired) {
         return { ok: false, status: 404, json: async () => ({ error: { message: 'model_not_found' } }) };
       }
+      // a scripted sequence lets a test reproduce timeouts / 500s / cut answers
+      if (script && script.length) {
+        const step = script.shift();
+        if (step === 'timeout') {
+          return new Promise((resolve, reject) => {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            setTimeout(() => reject(err), 5);
+          });
+        }
+        if (step === 'empty') return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '' }, finish_reason: 'length' }] }) };
+        if (step === 'truncated') return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'Respected Sir, I am' }, finish_reason: 'length' }] }) };
+        if (step === '500') return { ok: false, status: 500, json: async () => ({ error: { message: 'boom' } }) };
+        if (typeof step === 'string') return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: step } }] }) };
+      }
       return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'Theek hai, **sun rahi** hoon.' } }] }) };
     }
     if (target.includes('upload/drive')) return { ok: true, status: 200, json: async () => ({ id: 'f1', name: 'Draft.md' }) };
@@ -136,6 +152,7 @@ async function boot(options = {}) {
   window.TextDecoder = TextDecoder;
 
   window.eval(fs.readFileSync(path.join(ROOT, 'security.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'docs.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'));
   await wait(180);
 
@@ -520,6 +537,97 @@ function submit(window, text) {
   ok(text.includes('404'), 'a custom provider 404 is still explained');
   ok(text.includes('my-old-model'), 'the failing model is named', text.slice(-160));
   ok(text.toLowerCase().includes('band ho gaya'), 'the message points at retirement');
+  b.dom.window.close();
+
+  /* ── the failure that showed "Jawab nahi aaya" twice ────────────────────
+     A timeout, an empty body, or a 500 must heal itself before the user sees
+     an error — and if it still fails, they get a one-line message and a retry
+     button instead of a wall of apology. */
+
+  /* 1. a timeout on the first try recovers on its own */
+  b = await boot({ script: ['timeout', 'Theek hai, aa gaya.'] });
+  submit(b.window, 'namaste');
+  await wait(1500);
+  const timeoutReply = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
+  ok(timeoutReply.includes('aa gaya'), 'a timeout is retried instead of failing', timeoutReply);
+  ok(!timeoutReply.includes('Jawab nahi aaya'), 'no error bubble after a recovered timeout');
+  b.dom.window.close();
+
+  /* 2. an empty body (thinking ate the budget) is retried too */
+  b = await boot({ script: ['empty', 'Lo, jawab.'] });
+  submit(b.window, 'namaste');
+  await wait(1500);
+  const emptyReply = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
+  ok(emptyReply.includes('Lo, jawab'), 'an empty reply is retried', emptyReply);
+  b.dom.window.close();
+
+  /* 3. three failures in a row → one line + a retry button that actually works */
+  b = await boot({ script: ['500', '500', '500', 'Theek ho gaya.'] });
+  submit(b.window, 'leave application doc file banao');
+  await wait(4500);
+  const failedBubble = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
+  ok(failedBubble.includes('Jawab nahi aaya'), 'after retries the failure is stated once', failedBubble.slice(0, 80));
+  ok(!/Maaf karo[\s\S]*Maaf karo/.test(failedBubble), 'the double-apology text is gone');
+  const retryBtn = [...b.window.document.querySelectorAll('.msg__tool--retry')][0];
+  ok(Boolean(retryBtn), 'a retry button appears on a failed reply');
+  retryBtn.click();
+  await wait(900);
+  const afterRetry = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
+  ok(afterRetry.includes('Theek ho gaya'), 'the retry button sends the same question again', afterRetry.slice(0, 60));
+  b.dom.window.close();
+
+  /* 4. a cut-off answer is continued, not thrown away */
+  b = await boot({ script: ['truncated', ', a student of class 9, request leave.'] });
+  submit(b.window, 'application likho');
+  await wait(1500);
+  const stitched = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' ');
+  ok(stitched.includes('Respected Sir') && stitched.includes('class 9'), 'a truncated reply is continued and stitched', stitched.slice(0, 90));
+  b.dom.window.close();
+
+  /* ── Gemini 3 thinks by default; the request must say otherwise ───────── */
+  b = await boot({ cfg: Object.assign({}, CFG, { provider: 'gemini', model: 'gemini-3.5-flash', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', transcribe: '' }) });
+  submit(b.window, 'namaste');
+  await wait(600);
+  const gemBody = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body);
+  ok(gemBody.reasoning_effort === 'minimal', 'Gemini is asked for the cheapest thinking level', String(gemBody.reasoning_effort));
+  ok(Number(gemBody.max_tokens) >= 1200, 'the token budget leaves room for thinking', String(gemBody.max_tokens));
+  b.dom.window.close();
+
+  /* a non-Gemini provider must not receive Gemini-only fields */
+  b = await boot({});
+  submit(b.window, 'namaste');
+  await wait(600);
+  const groqBody = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body);
+  ok(groqBody.reasoning_effort === undefined, 'Groq request keeps no thinking field');
+  b.dom.window.close();
+
+  /* ── document requests produce a real .docx download ──────────────────── */
+  b = await boot({ script: ['# Subject: Leave application\n\nRespected Sir / Madam,\n\nI request leave on Monday, 23/11/2026 for personal reasons.\n\nYours obediently,\n[Your Name]'] });
+  submit(b.window, 'monday 23/11/2026 ki leave application doc file banao');
+  await wait(900);
+  const docBtn = [...b.window.document.querySelectorAll('.msg__tool--doc')][0];
+  ok(Boolean(docBtn), 'a document request offers a .docx download', docBtn && docBtn.textContent);
+  ok(b.window.document.body.textContent.includes('File ready'), 'the user is told the file is ready');
+
+  let downloaded = null;
+  b.window.URL.createObjectURL = (blob) => { downloaded = blob; return 'blob:test'; };
+  b.window.URL.revokeObjectURL = () => {};
+  b.window.HTMLAnchorElement.prototype.click = function () {};
+  docBtn.click();
+  await wait(100);
+  ok(downloaded && downloaded.type.includes('wordprocessingml'), 'clicking builds a Word blob', downloaded && downloaded.type);
+  const bytes = new Uint8Array(await downloaded.arrayBuffer());
+  ok(bytes[0] === 0x50 && bytes[1] === 0x4b, 'the file is a real zip/OOXML package', bytes.slice(0, 2).join(','));
+  const zipText = Buffer.from(bytes).toString('latin1');
+  ok(zipText.includes('word/document.xml'), 'the package contains word/document.xml');
+  ok(zipText.includes('23/11/2026'), 'the leave date survives into the document');
+  b.dom.window.close();
+
+  /* a plain chat message must NOT create a file */
+  b = await boot({ script: ['Haan, bolo.'] });
+  submit(b.window, 'kaise ho yaar');
+  await wait(700);
+  ok(b.window.document.querySelectorAll('.msg__tool--doc').length === 0, 'ordinary chat gets no download button');
   b.dom.window.close();
 
   /* ── Jenni's character reaches the model, on every single request ──────── */

@@ -37,6 +37,7 @@
   };
 
   const SEC = window.JENNI_SECURITY || {};
+  const DOCS = window.JENNI_DOCS || {};
   const $ = (id) => document.getElementById(id);
   const now = () => Date.now();
 
@@ -185,12 +186,49 @@
 
   /* ══════════════════════════════════════════════════════════════ THE AI */
 
+  /**
+   * Gemini 3 models 'think' before they answer: the default level is medium,
+   * which costs 5-15 seconds before the first visible token and silently eats
+   * the max_tokens budget (that is why replies came back empty or late).
+   * OpenAI-compatible Gemini maps reasoning_effort -> thinking_level, so ask
+   * for the cheapest level by model, and always give the thinking room.
+   */
+  const THINKING_FLOOR = {
+    // 3.8 Flash cannot go below 'low'; the 3.6/3.5/Lite line accepts 'minimal'
+    'gemini-3.8-flash': 'low',
+    'gemini-3.8-flash-lite': 'low'
+  };
+
+  function isGemini(cfg) {
+    return Boolean(cfg && /generativelanguage\.googleapis\.com/i.test(String(cfg.baseUrl || '')));
+  }
+
+  function buildRequestBody(cfg, model, messages, options) {
+    const body = {
+      model,
+      messages,
+      temperature: options.temperature || 0.8,
+      max_tokens: options.maxTokens || 500
+    };
+
+    if (isGemini(cfg)) {
+      const effort = THINKING_FLOOR[model] || 'minimal';
+      body.reasoning_effort = effort;
+      // thinking tokens are billed against max_tokens — a reply can be cut to
+      // nothing if they use the whole budget. Reserve room on top of the answer.
+      body.max_tokens = Number(body.max_tokens) + 1200;
+      if (effort === 'minimal') delete body.temperature;   // 3.6 ignores sampling anyway
+    }
+    return body;
+  }
+
   async function callProvider(messages, options = {}) {
     const cfg = state.cfg;
     if (!cfg || !cfg.apiKey) throw new Error('Pehle Setup me API key daalo.');
     const model = options.model || cfg.model;
 
     const controller = new AbortController();
+    const started = Date.now();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs || 60000);
 
     try {
@@ -200,12 +238,7 @@
           'Content-Type': 'application/json',
           Authorization: `Bearer ${cfg.apiKey}`
         },
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: options.temperature || 0.8,
-          max_tokens: options.maxTokens || 500
-        }),
+        body: JSON.stringify(buildRequestBody(cfg, model, messages, options)),
         signal: controller.signal
       });
 
@@ -217,7 +250,14 @@
           throw new Error('Key galat ya expired hai. Provider dashboard se nayi key lo.');
         }
         if (response.status === 429) {
-          throw new Error('Provider ki limit lag gayi (429). Thodi der baad try karo, ya doosra provider chuno.');
+          const busy = new Error('Provider ki limit lag gayi (429). Thodi der baad try karo, ya doosra provider chuno.');
+          busy.code = 'BUSY';              // same "worth one more try" family
+          throw busy;
+        }
+        if (response.status >= 500) {
+          const down = new Error(`Provider ki taraf se gadbad (HTTP ${response.status}).`);
+          down.code = 'HTTP_5XX';
+          throw down;
         }
         if (response.status === 404) {
           // A 404 from an OpenAI-compatible endpoint almost always means the
@@ -231,12 +271,37 @@
 
       const choice = payload && payload.choices && payload.choices[0];
       const content = choice && choice.message && choice.message.content;
-      if (!content) throw new Error('Provider ne khali jawab bheja.');
-      return String(content).trim();
+      const finish = choice && choice.finish_reason;
+
+      if (!content) {
+        // An empty body with finish_reason=length means the budget was spent on
+        // thinking before any visible token — call it a truncation, not a reply.
+        const error = new Error(finish === 'length'
+          ? 'Jawab budget khatam ho gaya. Dobara try karo.'
+          : 'Provider ne khali jawab bheja.');
+        error.code = 'EMPTY_REPLY';
+        error.finish = finish;
+        throw error;
+      }
+      const text = String(content).trim();
+      if (finish === 'length') {
+        const error = new Error('Jawab beech me kat gaya.');
+        error.code = 'TRUNCATED';
+        error.partial = text;
+        throw error;
+      }
+      app.lastLatency = Date.now() - started;
+      return text;
     } catch (error) {
-      if (error.name === 'AbortError') throw new Error('Jawab aane me bahut der lagi — dobara try karo.');
+      if (error.name === 'AbortError') {
+        const timeout = new Error('Provider ne 60 second me jawab nahi diya. Ek baar phir bhejo.');
+        timeout.code = 'TIMEOUT';
+        throw timeout;
+      }
       if (error instanceof TypeError) {
-        throw new Error('Provider tak nahi pahunch paye. Internet check karo, ya Base URL galat hai.');
+        const offline = new Error('Internet ya provider tak nahi pahunch paye. Connection check karo.');
+        offline.code = 'NETWORK';
+        throw offline;
       }
       throw error;
     } finally {
@@ -244,25 +309,58 @@
     }
   }
 
+  /* Errors worth one more attempt on their own — the network blipped, the
+     provider was busy, or the answer got cut off mid-way. */
+  const RETRYABLE = new Set(['TIMEOUT', 'NETWORK', 'EMPTY_REPLY', 'TRUNCATED', 'HTTP_5XX', 'BUSY']);
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
   /**
-   * The provider answered 404 → the model ID was retired. If the user is on a
-   * known preset and its default model has moved on, try that once, remember
-   * the change, and tell them. Otherwise rethrow so the error reaches the UI.
+   * Wraps callProvider with the recovery that the app promises:
+   *   404 retired model  → retry once on the preset's current model, save it
+   *   timeout / network / 5xx / empty → retry up to twice with a short backoff
+   *   truncated answer   → ask for the rest and stitch it together
    */
   async function askProvider(messages, options = {}) {
     try {
-      return await callProvider(messages, options);
+      return await withRetries(messages, options);
     } catch (error) {
       if (error.code !== 'MODEL_NOT_FOUND' || options.noRetry) throw error;
       const cfg = state.cfg || {};
       const preset = PRESETS[cfg.provider];
       if (!preset || !preset.model || preset.model === cfg.model) throw error;
 
-      const reply = await callProvider(messages, Object.assign({}, options, { model: preset.model, noRetry: true }));
+      const reply = await withRetries(messages, Object.assign({}, options, { model: preset.model, noRetry: true }));
       saveConfig(Object.assign({}, cfg, { model: preset.model }));
       if (voice.mode) stopListening();
       toast(`Purana model band tha — ab "${preset.model}" chal raha hai`, false);
       return reply;
+    }
+  }
+
+  async function withRetries(messages, options) {
+    let attempt = 0;
+    for (;;) {
+      try {
+        return await callProvider(messages, options);
+      } catch (error) {
+        if (error.code === 'TRUNCATED' && error.partial) {
+          // keep what we have and ask for the tail, so a long application still
+          // arrives complete instead of failing outright
+          const tail = await callProvider(
+            messages.concat([
+              { role: 'assistant', content: error.partial },
+              { role: 'user', content: 'Jahan chhoda tha wahin se aage likho — sirf bacha hua hissa, dohrana nahi.' }
+            ]),
+            Object.assign({}, options, { maxTokens: 900 })
+          );
+          return (error.partial + '\n' + tail).trim();
+        }
+        const canRetry = RETRYABLE.has(error.code) && attempt < 2 && !options.noRetry;
+        if (!canRetry) throw error;
+        attempt += 1;
+        setStatus('busy');
+        await sleep(700 * attempt);
+      }
     }
   }
 
@@ -293,6 +391,7 @@
       // honesty about being an AI
       'Jab seedha poochha jaye to maan lo ki tum AI ho (internet par chalne wali), par apni personality mat chhodo — insaan hone ka jhooth mat bolo.',
       // the user calls her "yes sir" style — mirror respect without grovelling
+      'Agar user "doc file / word / PDF / application / letter banao" bole, to seedha poori ready-to-use application/letter likho — poora draft ek hi jawab me, placeholders [] me, aur beech me "batao kis class me ho" jaisa sawaal mat poochho. File app khud bana degi.',
       'Kaam pakadne par turant haan bolo — "haan yaar, kar deti hoon", "chal, dekh rahi hoon", "ok done" — jab tak koi cheez sach me mumkin na ho. Pehle "haan" (short ack), phir kaam, phir ek line ka natija. Jhoothi confirmation mat do: jo tum nahi kar sakti (message bhejna, paisa bhejna, file save karna) usme "ye main nahi kar sakti, par tumhare liye ye kar sakti hoon…" bolo.'
     ]
   };
@@ -374,6 +473,48 @@
       });
 
       foot.append(save, copy);
+
+      if (message.doc && DOCS.buildDocx) {
+        const download = document.createElement('button');
+        download.type = 'button';
+        download.className = 'msg__tool msg__tool--doc';
+        download.textContent = '⬇ Download .docx';
+        download.addEventListener('click', () => {
+          try {
+            const blob = DOCS.buildDocx(message.doc.title, message.doc.text);
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = DOCS.docFileName(message.doc.title);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 4000);
+            download.textContent = 'Saved ✓';
+          } catch (error) {
+            toast('File nahi ban payi: ' + error.message, true);
+          }
+        });
+        foot.appendChild(download);
+      }
+
+      row.appendChild(foot);
+    }
+
+    if (message.role === 'jenni' && message.failed && message.retryText) {
+      const foot = document.createElement('div');
+      foot.className = 'msg__foot';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'msg__tool msg__tool--retry';
+      retry.textContent = 'Phir try karo';
+      retry.addEventListener('click', () => {
+        // drop the failed bubble so the thread does not fill with errors
+        state.chat = state.chat.filter((m) => m !== message);
+        paintChat();
+        send(message.retryText);
+      });
+      foot.appendChild(retry);
       row.appendChild(foot);
     }
 
@@ -386,6 +527,29 @@
     requestAnimationFrame(() => {
       box.scrollTo({ top: box.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
     });
+  }
+
+  /** "leave application doc banao" → "Leave application 23-11-2026" */
+  function docTitleFor(request, reply) {
+    const heading = (String(reply).match(/^#{1,6}\s+(.+)$/m) || [])[1];
+    const subject = (String(reply).match(/^\s*(?:subject|विषय)\s*[:\-]\s*(.+)$/im) || [])[1];
+    const date = (String(reply).match(/\b(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4})\b/) || [])[1];
+    const kind = (String(request).match(/\b(leave application|application|letter|email|essay|report|resume|cv|notice|note)\b/i) || [])[1];
+    const base = kind || heading || subject || 'Jenni document';
+    const clean = base.replace(/\s+/g, ' ').trim();
+    return date ? `${clean.charAt(0).toUpperCase() + clean.slice(1)} ${date}` : clean;
+  }
+
+  /* One line a frustrated user can act on. The status strip keeps the detail. */
+  function plainError(error) {
+    switch (error && error.code) {
+      case 'TIMEOUT': return 'Provider ne 60 second me jawab nahi diya.';
+      case 'NETWORK': return 'Internet ya provider tak nahi pahunch paye.';
+      case 'EMPTY_REPLY': return 'Provider ne khali jawab bheja.';
+      case 'TRUNCATED': return 'Jawab beech me kat gaya.';
+      case 'MODEL_NOT_FOUND': return error.message;
+      default: return (error && error.message) || 'Kuch galat hua.';
+    }
   }
 
   function setStatus(kind, text) {
@@ -431,14 +595,27 @@
       setStatus('ok', providerName() + ' · ' + state.cfg.model);
     } catch (error) {
       pending.pending = false;
-      pending.text = 'Maaf karo, jawab nahi mila.\n\n' + error.message;
-      reply = 'Maaf karo, jawab nahi mila. ' + error.message;
+      pending.failed = true;                 // drives the Retry button
+      pending.text = 'Jawab nahi aaya. ' + plainError(error);
+      pending.retryText = clean;             // the question to send again
+      reply = '';
       setStatus('error');
     } finally {
       state.busy = false;
       $('btnSend').disabled = false;
       writeJson(LS.chat, state.chat.filter((m) => !m.pending));
       paintChat();
+    }
+
+    // A document request gets a real file, not just prose in a bubble.
+    if (reply && DOCS.buildDocx && DOCS.looksLikeDocRequest(clean)) {
+      const last = state.chat[state.chat.length - 1];
+      if (last && last.role === 'jenni') {
+        last.doc = { title: docTitleFor(clean, reply), text: reply };
+        writeJson(LS.chat, state.chat.filter((m) => !m.pending));
+        paintChat();
+        toast('File ready — neeche Download dabao', false);
+      }
     }
 
     // Voice mode always reads the answer; typed chat only when the user asked.

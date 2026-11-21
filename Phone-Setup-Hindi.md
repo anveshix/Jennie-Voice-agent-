@@ -71,6 +71,14 @@ Jenni कोई "dear sir, main aapki seva me haazir hoon" वाली bot न�
 | **Voice-friendly** | बिना माँगे emoji, bullet, heading, table नहीं — क्योंकि जवाब बोला भी जाता है। |
 | **ईमानदार** | पूछो तो मान लेती है कि वो AI है — पर अपनी personality नहीं छोड़ती। |
 
+### 📄 Doc file — application, letter, resume
+
+Jenni से बस कहो: *"monday 23/11/2026 ki leave application doc file banao"*. वो poora draft लिखेगी, और jawab के नीचे **⬇ Download .docx** button दे देगी — एक असली Word file (Google Docs/Word/phone पर खुलेगी), जिसमें तुम्हारा नाम/class भरने की जगह `[ ]` में छूटी होगी।
+
+- "doc file / word me / pdf / file banao / application likho" — इन शब्दों पर file बनती है; सिर्फ़ बातचीत पर नहीं।
+- File **तुम्हारे phone में** बनती है, कहीं upload नहीं होती।
+- Download नहीं दबाया तो भी draft chat और Drafts में सुरक्षित रहता है।
+
 **जान-बूझकर सीमा:** ये personality prompt से बनती है, कोई अलग fine-tuned model नहीं — इसलिए provider बदलो तो भी वही Jenni रहती है। Key, OTP, password कभी नहीं माँगती; medical/legal/paisa वाले सवाल पर "doctor/lawyer से confirm करो" बोलती है।
 
 ---

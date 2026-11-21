@@ -241,6 +241,22 @@ level-headed friend** living on your phone.
 The persona is a prompt (`docs/app.js` → `PERSONA`, `server.js` → `SYSTEM_PROMPT`), not a fine-tuned model,
 so it travels with whichever provider you plug in.
 
+## Documents and failure handling
+
+- **Document requests make real files.** "leave application doc file banao", "word me do", "PDF chahiye",
+  "letter likho" → the model writes the full draft and the app attaches **⬇ Download .docx** to that reply.
+  The file is a genuine OOXML package built in the browser (`docs/docs.js`, an 80-line stored-zip writer +
+  WordprocessingML): it opens in Word, Google Docs and every phone office app. Nothing is uploaded.
+- **Gemini 3 thinks before answering.** Its default `thinking_level` is medium (time-to-first-token ≈ 11 s)
+  and thinking tokens are billed against `max_tokens`, which is why replies used to time out or come back
+  empty. Requests to `generativelanguage.googleapis.com` now send `reasoning_effort: minimal` (or `low` for
+  3.8 Flash) and add 1200 tokens of headroom. Other providers get no Gemini-only fields.
+- **Self-healing sends.** Timeout, network drop, HTTP 5xx, 429 and empty bodies retry automatically (2 tries,
+  backoff). A `finish_reason: length` answer is continued and stitched rather than discarded.
+- **Honest, short failures.** After retries the bubble says one line ("Jawab nahi aaya. Provider ne 60 second
+  me jawab nahi diya.") and offers **Phir try karo**, which resends the same question — no more stacked
+  "Maaf karo…" paragraphs, and failed bubbles are never replayed to the model.
+
 ## Privacy and limits
 
 - Each chat request sends the user's message and recent turns from the current tab to the configured AI provider. The conversation stays in tab memory only; it is not written to the app's server or browser storage.
