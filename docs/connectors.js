@@ -75,9 +75,12 @@
     };
   }
 
+  // A deliverable noun alone ("notice kya hota hai?") stays normal chat; it needs an action word.
+  const ACTION_RE = /\b(bana|banao|bana do|banado|banana|create|generate|make|draft|prepare|build|tayyar|chahiye|likh|likho|de do|do)\b|बना|तैयार|चाहिए|लिख/i;
   function wantsDelegation(text) {
     const s = String(text || '');
-    return /^\s*(nevermind|agents?)\s*[:,-]/i.test(s) || DELEGATE_RE.test(s);
+    if (/^\s*(nevermind|agents?)\s*[:,-]/i.test(s)) return true;
+    return !/\?\s*$/.test(s) && DELEGATE_RE.test(s) && ACTION_RE.test(s);
   }
   const stripPrefix = (text) => String(text).replace(/^\s*(nevermind|agents?)\s*[:,-]\s*/i, '');
 

@@ -715,3 +715,18 @@ test('disconnect clears only the requested service', async () => {
     assert.equal(conn.status().drive.mode, 'off');
   });
 });
+
+test('JENNI_ACCESS_TOKEN gates proxied /api/chat requests', async () => {
+  const server = createAppServer({ env: { JENNI_ACCESS_TOKEN: 'sekret', AI_API_KEY: 'k' } });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address();
+  const call = (headers) => new Promise((resolve, reject) => {
+    const req = require('node:http').request({ port, path: '/api/chat', method: 'POST', headers: { 'content-type': 'application/json', ...headers } }, (res) => { res.resume(); resolve(res.statusCode); });
+    req.on('error', reject); req.end('{}');
+  });
+  try {
+    assert.equal(await call({ 'x-forwarded-for': '1.2.3.4' }), 401);
+    assert.equal(await call({ 'x-forwarded-for': '1.2.3.4', 'x-jenni-token': 'wrong' }), 401);
+    assert.notEqual(await call({ 'x-forwarded-for': '1.2.3.4', 'x-jenni-token': 'sekret' }), 401);
+  } finally { server.close(); }
+});

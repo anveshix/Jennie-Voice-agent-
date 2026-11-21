@@ -51,7 +51,7 @@
 
   /* Every key this app writes, so a panic wipe can be complete. */
   const ALL_KEYS = Object.values(LS).concat([
-    'jenni_speak', 'jenni_voice_lang', 'jenni_voice_auto', 'jenni_screen',
+    'jenni_brief_day', 'jenni_speak', 'jenni_voice_lang', 'jenni_voice_auto', 'jenni_screen',
     'jenni_speak', 'jenni_screen', SEC.LOCK_KEY || 'jenni_lock_v1', SEC.VAULT_KEY || 'jenni_vault_v1'
   ]);
 
@@ -658,6 +658,8 @@
     try {
       // Voice: keep the reply short so speech starts fast. Typed: allow more.
       let delegated = null;
+      let untrusted = false;   // external text in this turn → it may not write memory
+      if (navigator.onLine === false) throw Object.assign(new Error('Internet nahi hai — connect hote hi dobara bhejna.'), { code: 'OFFLINE' });
       const nm = nmClient();
       if (nm && CN.wantsDelegation(clean)) {
         try {
@@ -665,10 +667,12 @@
         } catch (error) { toast('NeverMind: ' + error.message, true); }   // fall back to plain chat
       }
       if (delegated) {
+        untrusted = true;
         reply = ['NeverMind agents (' + delegated.status + '):', delegated.summary]
           .concat(delegated.files.map((f) => `[${f.name}](${f.url})`)).join('\n\n');
       } else {
         const repoContext = await repoContextFor(clean);
+        untrusted = Boolean(repoContext);
         reply = await askProvider(
           conversationForApi(clean + repoContext),
           { maxTokens: voice.mode ? 260 : 600 }
@@ -677,7 +681,7 @@
       if (BRAIN) {
         const parsed = BRAIN.extractOps(reply);
         reply = parsed.text;
-        if (parsed.ops.length) { saveMemory(BRAIN.applyOps(loadMemory(), parsed.ops)); toast('Memory update ho gayi', false); }
+        if (parsed.ops.length && !untrusted) { saveMemory(BRAIN.applyOps(loadMemory(), parsed.ops)); toast('Memory update ho gayi', false); }
       }
       pending.pending = false;
       pending.text = reply;
@@ -1180,12 +1184,15 @@
       const row = document.createElement('div');
       row.className = 'row';
       const label = document.createElement('span');
-      label.textContent = '[' + m.cat + '] ' + m.text;
+      const st = BRAIN.taskState(m);
+      label.textContent = m.cat === 'task'
+        ? (st === 'overdue' ? '⚠ ' : '☐ ') + m.text + (m.due ? ' — ' + m.due + (st === 'overdue' ? ' (overdue)' : st === 'today' ? ' (aaj)' : '') : '')
+        : '[' + m.cat + '] ' + m.text;
       label.style.flex = '1';
       const del = document.createElement('button');
       del.type = 'button';
       del.className = 'btn btn--ghost';
-      del.textContent = 'Delete';
+      del.textContent = m.cat === 'task' ? 'Done ✓' : 'Delete';
       del.addEventListener('click', () => saveMemory(loadMemory().filter((x) => x.id !== m.id)));
       row.append(label, del);
       host.appendChild(row);
@@ -2173,11 +2180,23 @@
     el.style.height = Math.min(el.scrollHeight, 132) + 'px';
   }
 
+  /* Once a day, the first time the app opens unlocked: tasks due or overdue.
+     Local only — no model call, so it costs nothing and works offline. */
+  function maybeBrief() {
+    if (!BRAIN) return;
+    const day = new Date().toISOString().slice(0, 10);
+    try { if (localStorage.getItem('jenni_brief_day') === day) return; } catch (e) { return; }
+    const text = BRAIN.briefing(loadMemory());
+    try { localStorage.setItem('jenni_brief_day', day); } catch (e) { /* ignore */ }
+    if (text) { state.chat.push({ role: 'jenni', text }); writeJson(LS.chat, state.chat.filter((m) => !m.pending)); }
+  }
+
   function showApp(options = {}) {
     $('gate').hidden = true;
     $('app').hidden = false;
     const cfg = state.cfg;
     setStatus(cfg && cfg.apiKey ? 'ok' : '', cfg && cfg.apiKey ? providerName() + ' · ' + cfg.model : 'setup needed');
+    maybeBrief();
     paintChat();
     paintDrive();
     paintDrafts();
@@ -2359,8 +2378,27 @@
       $('btnMemAdd').addEventListener('click', () => {
         const box = $('memInput');
         if (!box.value.trim()) return;
-        saveMemory(BRAIN.addMemory(loadMemory(), box.value, null));
+        const cmd = BRAIN.userCommand(box.value);
+        saveMemory(cmd ? BRAIN.applyOps(loadMemory(), [cmd]) : BRAIN.addMemory(loadMemory(), box.value, null));
         box.value = '';
+      });
+      $('btnMemExport').addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify({ app: 'jenni', v: 1, memory: loadMemory(), packs: loadPacks() }, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = 'jenni-memory-' + new Date().toISOString().slice(0, 10) + '.json';
+        document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      });
+      $('btnMemImport').addEventListener('click', () => $('memFile').click());
+      $('memFile').addEventListener('change', async (ev) => {
+        try {
+          const data = JSON.parse(await ev.target.files[0].text());
+          let list = loadMemory(); const before = list.length;
+          (Array.isArray(data.memory) ? data.memory : []).slice(0, 200).forEach((m) => {
+            list = BRAIN.addMemory(list, m && m.text, m && m.cat, m && m.ts, m && m.due && /^\d{4}-\d{2}-\d{2}$/.test(m.due) ? m.due : '');   // re-validated: imports are untrusted
+          });
+          saveMemory(list); toast((list.length - before) + ' memory import hui', false);
+        } catch (error) { toast('File padhi nahi ja saki', true); }
+        ev.target.value = '';
       });
       $('btnMemClear').addEventListener('click', () => { if (confirm('Saari memory delete karein?')) saveMemory([]); });
       paintMemory();

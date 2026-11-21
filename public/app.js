@@ -526,6 +526,11 @@
         signal: controller.signal
       });
       const payload = await response.json().catch(() => null);
+      if (response.status === 401 && payload?.error?.code === 'ACCESS_TOKEN_REQUIRED') {
+        const entered = window.prompt('Access token daalo:');
+        if (entered) localStorage.setItem('jenni_access_token', entered.trim());
+        throw new Error('Token save ho gaya — message dobara bhejo.');
+      }
       if (!response.ok) {
         const serverMessage = payload?.error?.message;
         if (serverMessage) throw new Error(serverMessage);
@@ -1477,7 +1482,7 @@
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Jenni-Token': localStorage.getItem('jenni_access_token') || '' },
         cache: 'no-store',
         body: JSON.stringify({ messages: requestMessages }),
         signal: controller.signal

@@ -34,3 +34,9 @@ test('routing + packs', () => {
   assert.equal(c.matchPacks('how to discover agent skills', packs).length, 1);
   assert.equal(c.matchPacks('weather today', packs).length, 0);
 });
+
+test('audit: questions and bare nouns are not delegated', () => {
+  assert.equal(c.wantsDelegation('notice kya hota hai?'), false);
+  assert.equal(c.wantsDelegation('quiz'), false);
+  assert.ok(c.wantsDelegation('Class 12 ka quiz bana do'));
+});

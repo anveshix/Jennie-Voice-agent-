@@ -309,3 +309,13 @@ Skills (official letters, lesson plans, result diagnostics, planner, commerce tu
 - **NeverMind bridge** (Setup → NeverMind): paste your deployed NeverMind URL (+ token). Requests for worksheets, quizzes, question papers, lesson plans, notices etc. (or `nevermind: …`) are delegated to its 9 agents / 21 verified skills; Jenni returns the summary and file links, and falls back to normal chat on error. "Memory sync" pulls NeverMind's active semantic/procedural memory into Jenni. On the NeverMind server set `NEVERMIND_CORS_ORIGINS` (default `https://anveshix.github.io`) and `NEVERMIND_API_TOKEN`.
 - **Skill packs**: install any public repo's `SKILL.md` files (PpSkills-/skills.sh format, e.g. `anveshix/PpSkills-`); they load when a message matches their description. "Find skills" searches skills.sh.
 - **Voice switch**: the speaker button in the app bar turns all voice (mic, hands-free loop, read-aloud) on/off; saved per device.
+
+## Audit hardening (personal-agent gaps)
+
+- **Tasks are real**: due dates (aaj/kal/Monday/25-11/5 dec/in 3 days, IST) with overdue/today/soon states, a Done button, and a once-a-day local briefing on open.
+- **Memory relevance**: tasks first, then notes ranked by overlap with your message (not just newest). Export/Import JSON backup in Setup.
+- **S5 privacy**: phone numbers, emails, Aadhaar/account/IFSC, roll numbers, credentials and API keys are refused by memory.
+- **Anti-injection**: memory and third-party skill packs are fenced as data; `[[ ]]` is stripped from stored text; at most 3 memory ops per reply; turns that used GitHub or NeverMind content cannot write memory; imports are re-validated.
+- **Fewer false triggers**: questions ("remember when…?", "notice kya hota hai?") are not commands or delegations.
+- **Offline**: clear message instead of a retry loop.
+- **Server**: set `JENNI_ACCESS_TOKEN` when the server is reachable beyond your own computer; `/api/chat`, `/api/transcribe` and `/api/connections/*` then need `X-Jenni-Token` (the web UI prompts once).

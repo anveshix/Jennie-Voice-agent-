@@ -346,6 +346,19 @@ function setSecurityHeaders(res) {
   res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=(self)');
 }
 
+/* Optional shared secret for deployments reachable from other devices/the internet.
+   Set JENNI_ACCESS_TOKEN; local requests stay open. Protects the AI key, private
+   school knowledge and Drive from anyone who finds the URL. */
+function accessDenied(req, env) {
+  const token = String(env.JENNI_ACCESS_TOKEN || '');
+  // behind a reverse proxy the socket is loopback; X-Forwarded-For means it is not really local
+  if (!token || (requestIsLocal(req) && !req.headers['x-forwarded-for'])) return false;
+  const sent = String(req.headers['x-jenni-token'] || '');
+  const a = crypto.createHash('sha256').update(sent).digest();
+  const b = crypto.createHash('sha256').update(token).digest();
+  return !crypto.timingSafeEqual(a, b);
+}
+
 function createRateLimiter({ limit = 30, windowMs = 10 * 60 * 1000 } = {}) {
   const clients = new Map();
   return function allow(req) {
@@ -389,6 +402,9 @@ function createAppServer({ env = process.env } = {}) {
     const pathname = getRequestPath(req);
 
     try {
+      if (/^\/api\/(chat|transcribe|connections)/.test(pathname) && accessDenied(req, env)) {
+        return jsonResponse(res, 401, { error: { code: 'ACCESS_TOKEN_REQUIRED', message: 'This Jenni server needs an access token.' } });
+      }
       if (pathname === '/api/health' && (req.method === 'GET' || req.method === 'HEAD')) {
         const config = currentConfig();
         return jsonResponse(res, 200, providers.describe(config));
