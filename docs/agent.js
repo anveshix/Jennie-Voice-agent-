@@ -20,8 +20,12 @@
 
   const MEMORY_KEY = 'jenni_memory_v1';
   const SKILLS_KEY = 'jenni_skills_v1';
+  const EPISODES_KEY = 'jenni_episodes_v1';   // one row per cleared chat
+  const INSIGHTS_KEY = 'jenni_insights_v1';   // what those chats taught her
   const MAX_FACTS = 120;
   const MAX_SKILLS = 40;
+  const MAX_EPISODES = 30;
+  const MAX_INSIGHTS = 8;
 
   /* ── text helpers ─────────────────────────────────────────────────────── */
 
@@ -50,6 +54,20 @@
     let shared = 0;
     left.forEach((word) => { if (right.has(word)) shared += 1; });
     return shared / (left.size + right.size - shared);
+  }
+
+  /** "name: Aarav" → "Aarav" — the part that can be found in a sentence. */
+  function factValue(fact) {
+    return String((fact && fact.text) || '').replace(/^[a-zA-Z]+:\s*/, '');
+  }
+
+  /** Do most of the words in `value` appear in this token set? */
+  function coveredBy(haystack, value) {
+    const wanted = tokens(value);
+    if (!wanted.size) return false;
+    let shared = 0;
+    wanted.forEach((word) => { if (haystack.has(word)) shared += 1; });
+    return shared / wanted.size >= 0.6;
   }
 
   /* ── memory: what Jenni keeps about the user ──────────────────────────── */
@@ -140,6 +158,37 @@
           return { fact, score };
         }).sort((a, b) => b.score - a.score);
         return ranked.slice(0, limit || 8).map((entry) => entry.fact);
+      },
+
+      /** A 👍 or a re-said fact: the thing that was right gets stickier. */
+      reinforce(text, delta) {
+        const haystack = tokens(text);
+        const facts = read();
+        let touched = 0;
+        facts.forEach((fact) => {
+          if (!coveredBy(haystack, factValue(fact))) return;
+          fact.hits = (fact.hits || 1) + 1;
+          fact.confidence = Math.min(0.99, (fact.confidence || 0.6) + (delta || 0.1));
+          fact.at = new Date().toISOString();
+          touched += 1;
+        });
+        if (touched) write(facts);
+        return touched;
+      },
+
+      /** A 👎: the guess that was inside that answer fades instead of repeating. */
+      weaken(text, delta) {
+        const haystack = tokens(text);
+        const facts = read();
+        let touched = 0;
+        facts.forEach((fact) => {
+          if (!coveredBy(haystack, factValue(fact))) return;
+          fact.confidence = Math.max(0.05, (fact.confidence || 0.6) - (delta || 0.15));
+          fact.at = new Date().toISOString();
+          touched += 1;
+        });
+        if (touched) write(facts);
+        return touched;
       },
 
       forget(id) {
@@ -280,7 +329,10 @@
       const scored = SKILL_LIBRARY.concat(readCustom()).map((skill) => {
         const hits = (skill.triggers || []).filter((trigger) => normal.includes(' ' + normalise(trigger) + ' ')
           || normal.includes(normalise(trigger)));
-        return { skill, score: hits.length };
+        /* A 👍/👎 nudges the order: the playbook you liked comes first on a
+           tie, the one you disliked sinks below an equally good match. */
+        const rating = Number(skill.rating) || 0;
+        return { skill, score: hits.length + (rating > 0 ? 0.4 : rating < 0 ? -0.6 : 0) };
       }).filter((entry) => entry.score > 0);
       scored.sort((a, b) => b.score - a.score);
       return scored.slice(0, 2).map((entry) => entry.skill);
@@ -295,6 +347,8 @@
       if (existing) {
         existing.version = (existing.version || 1) + 1;
         existing.steps = definition.steps.slice(0, 10).map((step) => String(step).slice(0, 200));
+        if (definition.example) existing.example = String(definition.example).slice(0, 900);
+        if (Number(definition.rating)) existing.rating = Number(definition.rating);
         existing.updatedAt = new Date().toISOString();
         writeCustom(custom);
         return existing;
@@ -304,6 +358,8 @@
         name: String(definition.name).slice(0, 60),
         triggers: (definition.triggers || [definition.name]).slice(0, 8).map((trigger) => String(trigger).slice(0, 40)),
         steps: definition.steps.slice(0, 10).map((step) => String(step).slice(0, 200)),
+        example: definition.example ? String(definition.example).slice(0, 900) : '',
+        rating: Number(definition.rating) || 0,
         learned: true,
         source: 'learned',
         version: 1,
@@ -319,11 +375,152 @@
       custom: readCustom,
       match,
       learn,
+      /** 👍 / 👎 on a procedure, found by name or by the words that matched it. */
+      rate(idOrName, delta) {
+        const wanted = normalise(idOrName);
+        if (!wanted) return null;
+        const custom = readCustom();
+        let hit = custom.find((skill) => skill.id === idOrName || normalise(skill.name) === wanted);
+        if (!hit) hit = custom.find((skill) => similarity(skill.name, idOrName) > 0.5);
+        if (!hit) return null;
+        hit.rating = Math.max(-3, Math.min(3, (Number(hit.rating) || 0) + (delta || 0)));
+        hit.ratedAt = new Date().toISOString();
+        writeCustom(custom);
+        return hit;
+      },
       remove(id) {
         writeCustom(readCustom().filter((skill) => skill.id !== id));
       },
       clear() {
         try { store.removeItem(SKILLS_KEY); } catch (error) { /* ignore */ }
+      }
+    };
+  }
+
+  /* ── journal: what every finished chat taught her ─────────────────────
+     This is the outside of the loop. `run()` reflects inside one answer; the
+     journal carries that experience into the *next* chat, so clearing the
+     screen costs the conversation but never costs the learning.
+     ---------------------------------------------------------------------- */
+
+  function createJournal(store) {
+    const readList = (key) => {
+      try {
+        const raw = store.getItem(key);
+        const list = raw ? JSON.parse(raw) : [];
+        return Array.isArray(list) ? list : [];
+      } catch (error) {
+        return [];
+      }
+    };
+    const writeList = (key, list) => {
+      try { store.setItem(key, JSON.stringify(list)); } catch (error) { /* full */ }
+    };
+
+    const episodes = () => readList(EPISODES_KEY);
+    const insights = () => readList(INSIGHTS_KEY);
+
+    function addInsight(insight) {
+      if (!insight || !insight.text) return null;
+      const text = String(insight.text).slice(0, 160);
+      const list = insights();
+      const existing = list.find((item) => normalise(item.text) === normalise(text));
+      if (existing) {
+        existing.hits = (existing.hits || 1) + 1;
+        existing.at = new Date().toISOString();
+        existing.confidence = Math.min(0.95, (existing.confidence || 0.5) + 0.1);
+        writeList(INSIGHTS_KEY, list);
+        return existing;
+      }
+      const row = {
+        id: 'i' + Date.now().toString(36),
+        text,
+        kind: (insight.kind || 'habit').slice(0, 20),
+        confidence: Math.min(0.95, Number(insight.confidence) || 0.55),
+        evidence: Number(insight.evidence) || 1,
+        hits: 1,
+        at: new Date().toISOString()
+      };
+      writeList(INSIGHTS_KEY, [row].concat(list).slice(0, MAX_INSIGHTS));
+      return row;
+    }
+
+    return {
+      episodes,
+      insights,
+      addInsight,
+
+      /** One row for a chat that is about to be cleared. */
+      addEpisode(episode) {
+        const row = {
+          id: 'e' + Date.now().toString(36),
+          at: new Date().toISOString(),
+          turns: Math.max(0, Number(episode && episode.turns) || 0),
+          topics: ((episode && episode.topics) || []).slice(0, 5).map((topic) => String(topic).slice(0, 60)),
+          facts: ((episode && episode.facts) || []).slice(0, 8).map((fact) => String(fact).slice(0, 80)),
+          skills: ((episode && episode.skills) || []).slice(0, 6).map((skill) => String(skill).slice(0, 60)),
+          liked: Math.max(0, Number(episode && episode.liked) || 0),
+          disliked: Math.max(0, Number(episode && episode.disliked) || 0)
+        };
+        /* Newest first, oldest drop off — a phone must not grow forever. */
+        const list = [row].concat(episodes()).slice(0, MAX_EPISODES);
+        writeList(EPISODES_KEY, list);
+        return row;
+      },
+
+      /**
+       * The recursive step: read the journal (and the ratings) and write down
+       * a small number of habits worth following. Deliberately cheap and
+       * bounded — it runs when a chat ends, not on every message.
+       */
+      reflect(sources = {}) {
+        const created = [];
+        const list = episodes();
+        const liked = Number(sources.liked) || 0;
+        const disliked = Number(sources.disliked) || 0;
+        const skillsSeen = (sources.skills || []).map(String);
+
+        if (liked >= 2) {
+          created.push(addInsight({
+            kind: 'taste',
+            text: 'Step-by-step jawab pasand aate hain — pehle seedha kaam, phir chhota explanation',
+            confidence: 0.6,
+            evidence: liked
+          }));
+        }
+        if (disliked >= 2) {
+          created.push(addInsight({
+            kind: 'taste',
+            text: 'Lamba bina structure wala jawab pasand nahi — chhota, tibbi-tibbi (point-wise) likho',
+            confidence: 0.6,
+            evidence: disliked
+          }));
+        }
+        if (skillsSeen.length) {
+          created.push(addInsight({
+            kind: 'skill',
+            text: `Kaam aaye playbooks: ${[...new Set(skillsSeen)].slice(0, 3).join(', ')}`,
+            confidence: 0.5,
+            evidence: skillsSeen.length
+          }));
+        }
+        if (list.length >= 3) {
+          const recentTopics = [...new Set(list.slice(0, 3).flatMap((ep) => ep.topics || []))].slice(0, 3);
+          if (recentTopics.length) {
+            created.push(addInsight({
+              kind: 'topic',
+              text: `Aajkal in cheezon par baat hoti hai: ${recentTopics.join(', ')}`,
+              confidence: 0.5,
+              evidence: list.length
+            }));
+          }
+        }
+        return created.filter(Boolean);
+      },
+
+      clear() {
+        try { store.removeItem(EPISODES_KEY); } catch (error) { /* ignore */ }
+        try { store.removeItem(INSIGHTS_KEY); } catch (error) { /* ignore */ }
       }
     };
   }
@@ -357,12 +554,35 @@
    * Only answers that actually read like a procedure are kept — a chat that
    * merely says "theek hai" teaches nothing.
    */
+  /** Steps can arrive as real lines, as "1. … 2. …" inside one paragraph, or as dashes. */
+  /** A line that only announces the list ("plan aisa:") is not a step. */
+  function isIntro(line) {
+    return /[:：]\s*$/.test(line) || /^(theek hai|chalo|dekh|plan aisa|dekho|sun|ok|okay|haan|to)\b/i.test(line);
+  }
+
+  function stepLines(text) {
+    const tidy = (line) => String(line).replace(/^\s*(?:[-*•]|\d{1,2}[.)])\s*/, '').replace(/\s+/g, ' ').trim();
+    const usable = (line) => line.length > 8 && line.length < 220;
+
+    const lines = text.split(/\n+/).map(tidy).filter(usable);
+    if (lines.length >= 2) return lines.filter((line) => !isIntro(line));
+
+    /* A phone answer is often one paragraph: "Plan aisa: 1. syllabus baanto.
+       2. roz 2 ghante padho. 3. Sunday test do." — split on the numbering. */
+    const inline = text
+      .split(/(?=(?:^|[.!?]\s|\s)\d{1,2}[.)]\s)/)
+      .map(tidy)
+      .filter(usable);
+    if (inline.length >= 2) return inline.filter((line) => !isIntro(line));
+
+    return [];
+  }
+
   function skillFrom(question, answer) {
     const q = String(question || '').trim();
     const text = String(answer || '').trim();
     if (q.length < 8 || text.length < 120) return null;
-    const numbered = text.split(/\n+/).map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
-      .filter((line) => line.length > 12 && line.length < 220);
+    const numbered = stepLines(text);
     if (numbered.length < 2) return null;
     return {
       name: q.slice(0, 60),
@@ -440,8 +660,8 @@
   }
 
   return {
-    MEMORY_KEY, SKILLS_KEY, SKILL_LIBRARY,
-    createMemory, createSkills, createTools, run, critiqueAnswer, skillFrom,
+    MEMORY_KEY, SKILLS_KEY, EPISODES_KEY, INSIGHTS_KEY, SKILL_LIBRARY,
+    createMemory, createSkills, createTools, createJournal, run, critiqueAnswer, skillFrom, stepLines, factValue,
     similarity, tokens, normalise
   };
 });

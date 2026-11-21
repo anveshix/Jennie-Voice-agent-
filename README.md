@@ -266,6 +266,30 @@ so it travels with whichever provider you plug in.
   me jawab nahi diya.") and offers **Phir try karo**, which resends the same question — no more stacked
   "Maaf karo…" paragraphs, and failed bubbles are never replayed to the model.
 
+## Clearing the chat is a lesson, not a reset
+
+The app bar's **↺ Naya chat** button runs a digest *before* the screen empties:
+
+1. every user turn is mined for durable facts (`memory.observe`);
+2. every answer that reads like a procedure becomes or improves a versioned playbook;
+3. one **episode** row is written (`jenni_episodes_v1`, capped at 30) — turns, topics, facts, skills;
+4. the journal reflects on it and keeps at most 8 **insights** (`jenni_insights_v1`).
+
+Those insights are injected into the system prompt of the *next* chat, so a new chat starts
+from what the old one learned instead of from zero. That is the outer loop: `run()` reflects
+inside one answer, the journal carries the result across sessions.
+
+**👍 / 👎 on any reply** is the second signal. 👍 lifts the confidence of the facts in that
+exchange, attaches the exchange to its playbook as a worked example, and the playbook wins
+ties in `match()`. 👎 lowers the confidence of the guesses it contained, drops the playbook's
+`rating`, and records an "avoid this" insight. Tapping the same button again undoes it.
+
+**Setup → 6. Journal** shows what was learned: habits with a confidence %, the last episodes,
+**Journal saaf karo** (journal only) and **Sab bhool jao** (memory + skills + journal).
+Export now includes memory, learned skills, episodes and insights — never the key — and import
+*merges* instead of replacing, so restoring an old backup on a phone that already learned
+something keeps both.
+
 ## Memory, skills and self-check (the agent layer)
 
 The phone app borrows what worked in 2026's personal agents and rebuilds it dependency-free
