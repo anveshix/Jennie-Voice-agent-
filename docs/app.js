@@ -14,6 +14,11 @@
     chat: 'jenni_chat_v1',
     drive: 'jenni_drive_v1',   // client id only
     driveToken: 'jenni_drive_tok_v1', // access token + expiry (session-ish)
+    nm: 'jenni_nm_v1',         // NeverMind url + token
+    nmTeam: 'jenni_nm_team_v1',
+    packs: 'jenni_packs_v1',   // installed SKILL.md packs
+    voiceOn: 'jenni_voice_on', // master voice switch ('0' = off)
+    memory: 'jenni_memory_v1', // long-term memory (local only, wiped by panic)
     lock: 'jenni_lock_v1',     // PIN settings + config
     vault: 'jenni_vault_v1',   // the encrypted API key
     memory: 'jenni_memory_v1', // durable facts about the user
@@ -56,7 +61,7 @@
 
   /* Every key this app writes, so a panic wipe can be complete. */
   const ALL_KEYS = Object.values(LS).concat([
-    'jenni_speak', 'jenni_voice_lang', 'jenni_voice_auto', 'jenni_screen',
+    'jenni_brief_day', 'jenni_speak', 'jenni_voice_lang', 'jenni_voice_auto', 'jenni_screen',
     'jenni_speak', 'jenni_screen', SEC.LOCK_KEY || 'jenni_lock_v1', SEC.VAULT_KEY || 'jenni_vault_v1'
   ]);
 
@@ -115,6 +120,7 @@
     cfg: readJson(LS.config, null),
     drafts: readJson(LS.drafts, []),
     chat: readJson(LS.chat, []),
+    memory: readJson(LS.memory, []),
     drive: readJson(LS.drive, { clientId: '' }),
     driveToken: readJson(LS.driveToken, null),
     busy: false,
@@ -411,11 +417,81 @@
     ]
   };
 
-  function personaPrompt() {
+  function loadPacks() { return readJson(LS.packs, []); }
+  function nmClient() {
+    const cfg = readJson(LS.nm, null);
+    return CN && cfg && cfg.url ? CN.createNeverMind(cfg) : null;
+  }
+
+  /* ── master voice switch ───────────────────────────────────────────────── */
+  function voiceEnabled() { try { return localStorage.getItem(LS.voiceOn) !== '0'; } catch (e) { return true; } }
+  function paintVoiceMaster() {
+    const on = voiceEnabled();
+    document.body.classList.toggle('voice-off', !on);
+    const b = $('btnVoiceMaster');
+    if (b) {
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-pressed', String(on));
+      b.setAttribute('aria-label', on ? 'Voice on — tap to turn off' : 'Voice off — tap to turn on');
+      b.title = on ? 'Voice ON' : 'Voice OFF';
+      b.querySelector('.vm-slash').style.display = on ? 'none' : '';
+    }
+  }
+  function setVoiceEnabled(on) {
+    try { localStorage.setItem(LS.voiceOn, on ? '1' : '0'); } catch (e) { /* private mode */ }
+    if (!on) { stopVoiceMode(true); stopSpeaking(); }
+    paintVoiceMaster();
+    toast(on ? 'Voice ON' : 'Voice OFF', false);
+  }
+
+  function loadMemory() { return BRAIN ? state.memory : []; }
+  function saveMemory(list) { state.memory = list; persist('memory'); paintMemory(); }
+
+  /* ── encrypted storage for chat, drafts and memory ─────────────────────────
+     With a PIN set, these live only as AES-GCM blobs (`<key>_enc`). While the
+     app is locked nothing is written and nothing is held in memory. */
+  const writeChain = {};
+  function persist(name) {
+    const key = LS[name];
+    const value = name === 'chat' ? state.chat.filter((m) => !m.pending) : state[name];
+    if (!security.enabled) return Promise.resolve(writeJson(key, value));
+    const dataKey = security.dataKey;
+    if (!dataKey) return Promise.resolve(false);              // locked: never fall back to plaintext
+    writeChain[name] = (writeChain[name] || Promise.resolve())
+      .then(() => SEC.encryptJson(dataKey, key, value))
+      .then((blob) => { localStorage.setItem(key + '_enc', JSON.stringify(blob)); localStorage.removeItem(key); return true; })
+      .catch(() => { toast('Data encrypt/save nahi ho paya', true); return false; });
+    return writeChain[name];
+  }
+  const persistAll = () => Promise.all(['chat', 'drafts', 'memory'].map(persist));
+
+  async function initDataKey(pin, fresh) {
+    let salt = localStorage.getItem(LS.dk);
+    if (!salt || fresh) { salt = SEC.newSalt(); localStorage.setItem(LS.dk, salt); }
+    security.dataKey = await SEC.deriveDataKey(pin, salt);
+  }
+
+  /* Load the three stores after unlock; migrate any legacy plaintext copy. */
+  async function hydrate() {
+    for (const name of ['chat', 'drafts', 'memory']) {
+      const key = LS[name];
+      const raw = localStorage.getItem(key + '_enc');
+      if (raw && security.dataKey) {
+        try { state[name] = await SEC.decryptJson(security.dataKey, key, JSON.parse(raw)); }
+        catch (error) { state[name] = []; toast('Ek saved data padha nahi ja saka (' + name + ')', true); }
+      } else {
+        state[name] = readJson(key, []);
+        if (security.enabled && security.dataKey && localStorage.getItem(key)) await persist(name);   // encrypt + remove plaintext
+      }
+    }
+  }
+
+  function personaPrompt(userText) {
     return [
       PERSONA.lines.join(' '),
       'Aaj: ' + new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.',
-      'Never ask for or repeat API keys, passwords or personal identifiers.'
+      'Never ask for or repeat API keys, passwords or personal identifiers.',
+      BRAIN ? BRAIN.buildContext({ text: userText, memories: loadMemory(), packs: CN ? CN.matchPacks(userText, loadPacks()) : [], team: readJson(LS.nmTeam, []) }) : ''
     ].join(' ');
   }
 
@@ -665,6 +741,11 @@
       return;
     }
 
+    if (BRAIN) {
+      const cmd = BRAIN.userCommand(clean);
+      if (cmd) { saveMemory(BRAIN.applyOps(loadMemory(), [cmd])); toast('Yaad rakh liya', false); }
+    }
+
     state.busy = true;
     $('input').value = '';
     autoGrow($('input'));
@@ -726,7 +807,7 @@
     } finally {
       state.busy = false;
       $('btnSend').disabled = false;
-      writeJson(LS.chat, state.chat.filter((m) => !m.pending));
+      persist('chat');
       paintChat();
     }
 
@@ -741,7 +822,7 @@
           const title = docTitleFor(clean, reply);
           const built = DOCS.buildFile(title, reply, asked ? clean : '');
           last.doc = { title, text: reply, format: built.format, name: built.name };
-          writeJson(LS.chat, state.chat.filter((m) => !m.pending));
+          persist('chat');
           paintChat();
           toast(`File ready (.${built.format}) — neeche Download dabao`, false);
         }
@@ -826,7 +907,7 @@
   function speak(text) {
     return new Promise((resolve) => {
       const clean = speakableText(text);
-      if (!clean || !window.speechSynthesis) { resolve(false); return; }
+      if (!clean || !window.speechSynthesis || !voiceEnabled()) { resolve(false); return; }
       try {
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(clean);
@@ -1092,6 +1173,7 @@
   }
 
   function startVoiceMode() {
+    if (!voiceEnabled()) { toast('Voice OFF hai — upar speaker button se ON karo', true); return; }
     if (!state.cfg || !state.cfg.apiKey) {
       openSheet('setup');
       setResult('setupResult', 'Voice mode ke liye pehle API key save karo.', 'error');
@@ -1193,9 +1275,39 @@
     const title = String(text).split('\n')[0].replace(/[#*_`>]/g, '').trim().slice(0, 60) || 'Draft';
     state.drafts.unshift({ id: String(now()), title, text, at: new Date().toISOString() });
     state.drafts = state.drafts.slice(0, 200);
-    writeJson(LS.drafts, state.drafts);
+    persist('drafts');
     paintDrafts();
     toast('Draft save ho gaya');
+  }
+
+  function paintMemory() {
+    const host = $('memoryList');
+    if (!host || !BRAIN) return;
+    const list = loadMemory();
+    host.textContent = '';
+    if (!list.length) {
+      const empty = document.createElement('p');
+      empty.className = 'room-result';
+      empty.textContent = 'Abhi kuch yaad nahi. "yaad rakho: ..." bolo ya neeche likho.';
+      host.appendChild(empty);
+    }
+    list.slice().reverse().forEach((m) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const label = document.createElement('span');
+      const st = BRAIN.taskState(m);
+      label.textContent = m.cat === 'task'
+        ? (st === 'overdue' ? '⚠ ' : '☐ ') + m.text + (m.due ? ' — ' + m.due + (st === 'overdue' ? ' (overdue)' : st === 'today' ? ' (aaj)' : '') : '')
+        : '[' + m.cat + '] ' + m.text;
+      label.style.flex = '1';
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'btn btn--ghost';
+      del.textContent = m.cat === 'task' ? 'Done ✓' : 'Delete';
+      del.addEventListener('click', () => saveMemory(loadMemory().filter((x) => x.id !== m.id)));
+      row.append(label, del);
+      host.appendChild(row);
+    });
   }
 
   function paintDrafts() {
@@ -1234,7 +1346,7 @@
     list.querySelectorAll('[data-drive]').forEach((b) => b.addEventListener('click', () => uploadDraft(b.dataset.send)));
     list.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => {
       state.drafts = state.drafts.filter((d) => d.id !== b.dataset.del);
-      writeJson(LS.drafts, state.drafts);
+      persist('drafts');
       paintDrafts();
     }));
   }
@@ -1647,7 +1759,7 @@
         if (Array.isArray(data.drafts)) {
           const known = new Set(state.drafts.map((d) => d.id));
           state.drafts = [...data.drafts.filter((d) => d && d.id && !known.has(d.id)), ...state.drafts];
-          writeJson(LS.drafts, state.drafts);
+          persist('drafts');
           paintDrafts();
         }
         /* Merge, never replace: a restore on a phone that already learned
@@ -1763,7 +1875,8 @@
     lockOnHide: true,
     lock: null,
     timer: null,
-    unlockedThisSession: false
+    unlockedThisSession: false,
+    dataKey: null
   };
 
   function readLockSettings() {
@@ -1837,6 +1950,9 @@
   function lockNow(options = {}) {
     if (!security.enabled) return false;
     forgetSecret();
+    security.dataKey = null;
+    state.chat = []; state.drafts = []; state.memory = [];
+    paintChat(); paintDrafts(); paintMemory();
     $('app').hidden = true;
     $('gate').hidden = true;
     $('lockScreen').hidden = false;
@@ -1847,10 +1963,12 @@
     return true;
   }
 
-  function unlockWith(pin, cfg) {
+  async function unlockWith(pin, cfg) {
     security.pin = pin;
-    state.cfg = cfg;
-    localStorage.setItem(LS.config, JSON.stringify(cfg));   // needed for the trip through the app
+    state.cfg = cfg;                       // memory only: the key is never written back in plaintext
+    await initDataKey(pin);
+    await hydrate();
+    paintMemory();
     $('lockScreen').hidden = true;
     $('gate').hidden = true;
     $('app').hidden = false;
@@ -2179,7 +2297,7 @@
     setResult('lockResult', 'Khol rahe hain…', 'busy');
     try {
       const cfg = await openVault(pin);
-      unlockWith(pin, cfg);
+      await unlockWith(pin, cfg);
     } catch (error) {
       const outcome = security.lock ? security.lock.recordFailure() : { failed: 0, cooldownMs: 0 };
       const left = Math.max(0, (security.lock ? security.lock.settings.attempts : 5) - outcome.failed);
@@ -2203,12 +2321,21 @@
     localStorage.setItem(LS.vault, JSON.stringify(sealed));
     localStorage.removeItem(LS.config);
     state.cfg = cfg;
+    await initDataKey(pin, true);          // new salt + key, then re-encrypt everything
+    await persistAll();
     return cfg;
   }
 
   /* Remove the PIN requirement, keeping the key in the clear (user's choice). */
   async function disableLockWith(pin) {
     const cfg = await openVault(pin);
+    await initDataKey(pin);
+    await hydrate();                       // make sure the decrypted data is in memory first
+    security.enabled = false;
+    await persistAll();                    // back to plaintext (user's choice)
+    ['chat', 'drafts', 'memory'].forEach((n) => localStorage.removeItem(LS[n] + '_enc'));
+    localStorage.removeItem(LS.dk);
+    security.dataKey = null;
     localStorage.setItem(LS.config, JSON.stringify(cfg));
     localStorage.removeItem(LS.vault);
     localStorage.removeItem(LS.lock);
@@ -2497,11 +2624,23 @@
     el.style.height = Math.min(el.scrollHeight, 132) + 'px';
   }
 
+  /* Once a day, the first time the app opens unlocked: tasks due or overdue.
+     Local only — no model call, so it costs nothing and works offline. */
+  function maybeBrief() {
+    if (!BRAIN) return;
+    const day = new Date().toISOString().slice(0, 10);
+    try { if (localStorage.getItem('jenni_brief_day') === day) return; } catch (e) { return; }
+    const text = BRAIN.briefing(loadMemory());
+    try { localStorage.setItem('jenni_brief_day', day); } catch (e) { /* ignore */ }
+    if (text) { state.chat.push({ role: 'jenni', text }); persist('chat'); }
+  }
+
   function showApp(options = {}) {
     $('gate').hidden = true;
     $('app').hidden = false;
     const cfg = state.cfg;
     setStatus(cfg && cfg.apiKey ? 'ok' : '', cfg && cfg.apiKey ? providerName() + ' · ' + cfg.model : 'setup needed');
+    maybeBrief();
     paintChat();
     paintDrive();
     paintDrafts();
@@ -2608,6 +2747,7 @@
     /* one-shot mic: listen for a single message */
     $('btnMic').addEventListener('click', () => {
       if (state.listening) { stopListening(); return; }
+      if (!voiceEnabled()) { toast('Voice OFF hai — upar speaker button se ON karo', true); return; }
       const wasMode = voice.mode;
       voice.mode = true;
       listenOnce();
@@ -2625,6 +2765,88 @@
     $('btnVoiceStart').addEventListener('click', () => { closeSheets(); startVoiceMode(); });
 
     $('btnOpenSetup').addEventListener('click', () => openSheet('setup'));
+    if ($('btnVoiceMaster')) { $('btnVoiceMaster').addEventListener('click', () => setVoiceEnabled(!voiceEnabled())); paintVoiceMaster(); }
+    if (CN && $('btnNmSave')) {
+      const cfg0 = readJson(LS.nm, {});
+      $('nmUrl').value = cfg0.url || '';
+      $('nmToken').value = cfg0.token || '';
+      const say = (m, k) => setResult('nmResult', m, k);
+      $('btnNmSave').addEventListener('click', async () => {
+        const cfg = { url: $('nmUrl').value.trim().replace(/\/+$/, ''), token: $('nmToken').value.trim() };
+        if (!cfg.url) { localStorage.removeItem(LS.nm); localStorage.removeItem(LS.nmTeam); say('NeverMind disconnect.', 'ok'); return; }
+        try {
+          const nm = CN.createNeverMind(cfg);
+          await nm.health();
+          const team = await nm.roster();
+          writeJson(LS.nm, cfg); writeJson(LS.nmTeam, team);
+          say('Connected — ' + team.length + ' agents mile. Ab worksheet/quiz/lesson plan wale kaam wahi karega.', 'ok');
+        } catch (error) { say(error.message, 'error'); }
+      });
+      $('btnNmSync').addEventListener('click', async () => {
+        const nm = nmClient();
+        if (!nm) { say('Pehle NeverMind connect karo.', 'error'); return; }
+        try {
+          let list = loadMemory(); const before = list.length;
+          (await nm.memories()).slice(0, 30).forEach((t) => { list = BRAIN.addMemory(list, 'NeverMind: ' + t, 'school'); });
+          saveMemory(list); say((list.length - before) + ' nayi memory aayi.', 'ok');
+        } catch (error) { say(error.message, 'error'); }
+      });
+      const paintPacks = () => {
+        const host = $('packList'); host.textContent = '';
+        loadPacks().forEach((p) => {
+          const row = document.createElement('div'); row.className = 'row';
+          const label = document.createElement('span'); label.style.flex = '1'; label.textContent = p.name + ' — ' + (p.description || '').slice(0, 70);
+          const del = document.createElement('button'); del.type = 'button'; del.className = 'btn btn--ghost'; del.textContent = 'Remove';
+          del.addEventListener('click', () => { writeJson(LS.packs, loadPacks().filter((x) => x.name !== p.name)); paintPacks(); });
+          row.append(label, del); host.appendChild(row);
+        });
+      };
+      $('btnPackAdd').addEventListener('click', async () => {
+        try {
+          say('Skills padh rahi hoon…', 'ok');
+          const found = await CN.fetchPacks($('packRepo').value, GH);
+          const have = loadPacks().filter((p) => !found.some((f) => f.name === p.name));
+          writeJson(LS.packs, have.concat(found).slice(-30)); paintPacks();
+          say(found.length + ' skill install hui: ' + found.map((f) => f.name).join(', '), 'ok');
+        } catch (error) { say(error.message, 'error'); }
+      });
+      $('btnPackFind').addEventListener('click', async () => {
+        try {
+          const r = await CN.searchSkillsSh($('packQuery').value);
+          say(r.length ? r.map((x) => x.name + ' ← ' + x.source).join(' | ') + '  (source repo upar daal ke install karo)' : 'Kuch nahi mila.', r.length ? 'ok' : 'error');
+        } catch (error) { say('skills.sh search nahi ho paya: ' + error.message, 'error'); }
+      });
+      paintPacks();
+    }
+    if ($('btnMemAdd') && BRAIN) {
+      $('btnMemAdd').addEventListener('click', () => {
+        const box = $('memInput');
+        if (!box.value.trim()) return;
+        const cmd = BRAIN.userCommand(box.value);
+        saveMemory(cmd ? BRAIN.applyOps(loadMemory(), [cmd]) : BRAIN.addMemory(loadMemory(), box.value, null));
+        box.value = '';
+      });
+      $('btnMemExport').addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify({ app: 'jenni', v: 1, memory: loadMemory(), packs: loadPacks() }, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = 'jenni-memory-' + new Date().toISOString().slice(0, 10) + '.json';
+        document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      });
+      $('btnMemImport').addEventListener('click', () => $('memFile').click());
+      $('memFile').addEventListener('change', async (ev) => {
+        try {
+          const data = JSON.parse(await ev.target.files[0].text());
+          let list = loadMemory(); const before = list.length;
+          (Array.isArray(data.memory) ? data.memory : []).slice(0, 200).forEach((m) => {
+            list = BRAIN.addMemory(list, m && m.text, m && m.cat, m && m.ts, m && m.due && /^\d{4}-\d{2}-\d{2}$/.test(m.due) ? m.due : '');   // re-validated: imports are untrusted
+          });
+          saveMemory(list); toast((list.length - before) + ' memory import hui', false);
+        } catch (error) { toast('File padhi nahi ja saki', true); }
+        ev.target.value = '';
+      });
+      $('btnMemClear').addEventListener('click', () => { if (confirm('Saari memory delete karein?')) saveMemory([]); });
+      paintMemory();
+    }
 
     document.querySelectorAll('.tab').forEach((tab) => {
       tab.addEventListener('click', () => {
@@ -2875,6 +3097,7 @@
          nothing      → the setup gate                                        */
     if (security.enabled && localStorage.getItem(LS.vault)) {
       state.cfg = null;                      // never hold the key while locked
+      state.chat = []; state.drafts = []; state.memory = [];
       $('gate').hidden = true;
       $('app').hidden = true;
       $('lockScreen').hidden = false;

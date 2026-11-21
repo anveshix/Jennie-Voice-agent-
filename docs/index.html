@@ -316,6 +316,35 @@
     </div>
     <p class="room-result" id="setupResult" role="status" aria-live="polite"></p>
 
+    <h3 class="sheet__sub">Memory (Jenni ko kya yaad hai)</h3>
+    <div id="memoryList"></div>
+    <input class="field" id="memInput" maxlength="220" placeholder="note, ya  todo: SA1 report Monday">
+    <div class="row row--wrap">
+      <button class="btn btn--primary" type="button" id="btnMemAdd">Add</button>
+      <button class="btn" type="button" id="btnMemExport">Export</button>
+      <button class="btn" type="button" id="btnMemImport">Import</button>
+      <button class="btn btn--ghost" type="button" id="btnMemClear">Clear all</button>
+      <input type="file" id="memFile" accept="application/json" hidden>
+    </div>
+
+    <h3 class="sheet__sub">NeverMind agents &amp; skill packs</h3>
+    <label class="label" for="nmUrl">NeverMind server URL (https)</label>
+    <input class="field mono" id="nmUrl" spellcheck="false" autocapitalize="off" placeholder="https://your-nevermind.onrender.com">
+    <input class="field" id="nmToken" type="password" autocomplete="off" placeholder="API token (optional)">
+    <div class="row row--wrap">
+      <button class="btn btn--primary" type="button" id="btnNmSave">Connect</button>
+      <button class="btn" type="button" id="btnNmSync">Memory sync</button>
+    </div>
+    <label class="label" for="packRepo">Skill pack (GitHub owner/repo with SKILL.md)</label>
+    <input class="field mono" id="packRepo" spellcheck="false" autocapitalize="off" placeholder="anveshix/PpSkills-">
+    <div class="row row--wrap">
+      <button class="btn btn--primary" type="button" id="btnPackAdd">Install</button>
+    </div>
+    <div id="packList"></div>
+    <input class="field" id="packQuery" placeholder="skills.sh par dhundo (e.g. pdf, testing)">
+    <button class="btn" type="button" id="btnPackFind">Find skills</button>
+    <p class="room-result" id="nmResult" role="status" aria-live="polite"></p>
+
     <h3 class="sheet__sub">2. Security</h3>
     <div class="secgrid">
       <div class="secgrid__cell">

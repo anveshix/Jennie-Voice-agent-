@@ -341,3 +341,31 @@ in the browser (`docs/agent.js`, plain localStorage, no server):
 - This demo has no user login. Do not expose a server with a billable AI key to the public internet without putting it behind appropriate authentication, HTTPS, and operational protections. The API key is server-side, but an unauthenticated public endpoint could still be abused.
 
 If the AI service is not configured or a provider request fails, Jenni displays the error instead of pretending a reply or external action succeeded.
+
+## Memory, skills and autonomy (`docs/brain.js`)
+
+Jenni knows the owner profile (from `AGENTS.md`), the current IST date/time, and a long-term **memory** kept only in this browser (`jenni_memory_v1`, wiped by panic). Say "yaad rakho: …", "bhool jao …", or just talk: Jenni saves durable facts and tasks herself via hidden `[[remember/task/done/forget: …]]` tags that are stripped from the reply. Passwords/OTP-like text is never saved. Manage it in **Setup → Memory**.
+
+Skills (official letters, lesson plans, result diagnostics, planner, commerce tutor, CBSE compliance, code, sensitive advice) load only when the message matches. Add one by appending to `SKILLS` in `docs/brain.js`. The Node server uses the same module (profile, time, skills; memory stays on the phone).
+
+## NeverMind agents, skill packs, voice switch
+
+- **NeverMind bridge** (Setup → NeverMind): paste your deployed NeverMind URL (+ token). Requests for worksheets, quizzes, question papers, lesson plans, notices etc. (or `nevermind: …`) are delegated to its 9 agents / 21 verified skills; Jenni returns the summary and file links, and falls back to normal chat on error. "Memory sync" pulls NeverMind's active semantic/procedural memory into Jenni. On the NeverMind server set `NEVERMIND_CORS_ORIGINS` (default `https://anveshix.github.io`) and `NEVERMIND_API_TOKEN`.
+- **Skill packs**: install any public repo's `SKILL.md` files (PpSkills-/skills.sh format, e.g. `anveshix/PpSkills-`); they load when a message matches their description. "Find skills" searches skills.sh.
+- **Voice switch**: the speaker button in the app bar turns all voice (mic, hands-free loop, read-aloud) on/off; saved per device.
+
+## Audit hardening (personal-agent gaps)
+
+- **Tasks are real**: due dates (aaj/kal/Monday/25-11/5 dec/in 3 days, IST) with overdue/today/soon states, a Done button, and a once-a-day local briefing on open.
+- **Memory relevance**: tasks first, then notes ranked by overlap with your message (not just newest). Export/Import JSON backup in Setup.
+- **S5 privacy**: phone numbers, emails, Aadhaar/account/IFSC, roll numbers, credentials and API keys are refused by memory.
+- **Anti-injection**: memory and third-party skill packs are fenced as data; `[[ ]]` is stripped from stored text; at most 3 memory ops per reply; turns that used GitHub or NeverMind content cannot write memory; imports are re-validated.
+- **Fewer false triggers**: questions ("remember when…?", "notice kya hota hai?") are not commands or delegations.
+- **Offline**: clear message instead of a retry loop.
+- **Server**: set `JENNI_ACCESS_TOKEN` when the server is reachable beyond your own computer; `/api/chat`, `/api/transcribe` and `/api/connections/*` then need `X-Jenni-Token` (the web UI prompts once).
+
+## Encrypted chat history
+
+With a PIN set, **chat, drafts and memory** are stored only as AES-256-GCM blobs (`*_v1_enc`), under a key derived from the PIN (PBKDF2-SHA256, 210k, own salt) that lives in memory only while unlocked. Locking (manual, idle, tab hide) clears them from memory and the page; nothing is written while locked. Setting, changing or removing the PIN re-encrypts/migrates existing data. Unlocking no longer writes the API key back to storage in plaintext. Forget the PIN and the data is unrecoverable — use Memory → Export for a backup first.
+
+Phone use (GitHub Pages app) has no server, so `JENNI_ACCESS_TOKEN` is not needed there; it only matters if you deploy the Node server. For the NeverMind bridge from the phone, set `NEVERMIND_API_TOKEN`.
