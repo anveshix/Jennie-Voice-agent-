@@ -3,6 +3,22 @@
 > तारीख: 16 नवंबर 2026 · प्रोजेक्ट: `Jennie-Voice-agent-`
 > पूरा रंगीन PDF: `Jenni-Setup-Guide-Hindi.pdf`
 
+## सिर्फ mobile है? (Node.js / terminal नहीं) — सबसे आसान रास्ता
+
+laptop, terminal, `npm`, clone — कुछ भी ज़रूरत नहीं। Phone में यह link खोलो:
+
+`https://anveshix.github.io/Jennie-Voice-agent-/`
+
+1. **Key बनाओ:** console.groq.com/keys → Create API Key → copy (`gsk_…`)। Groq free है, card नहीं चाहिए।
+2. **App खोलो:** ऊपर वाला link Chrome/Safari में।
+3. **Home screen पर लगाओ:** Android में ⋮ → Add to Home screen → Install; iPhone में Share → Add to Home Screen।
+4. **Key डालो:** app में paste → Save &amp; start → फिर Setup tab → Test connection।
+5. **बात करो:** लिखो या mic दबाओ। जवाब बोलकर सुनना है तो Setup → "Jawab bol kar sunao" on करो।
+
+इस रास्ते में कोई server नहीं चलता। AI की request सीधे phone से provider को जाती है, इसलिए key सिर्फ उसी phone की storage में रहती है। Phone खो गया तो provider dashboard से key revoke कर दो, और बिल वाले provider में spend limit लगाओ।
+
+पूरी step-by-step गाइड: `Phone-Setup-Hindi.md`
+
 ## सीधा जवाब
 
 **हाँ, API key डालनी होगी — लेकिन दो काम अलग-अलग हैं:**
