@@ -204,7 +204,9 @@ Bot **voice mode** ka hi doosra button hai — dono ek hi cheez chalate hain. Bo
 
 **सुझाव:** Groq से शुरू करो — free है, जवाब तेज़ आते हैं, और गलती से bill नहीं आएगा।
 
-Model बदलना है? **Setup → Model** में लिखो। मिसाल: `llama-3.3-70b-versatile`, `gemini-2.0-flash`, `gpt-4o-mini`।
+Model बदलना है? **Setup → Model** में लिखो, या पास वाला **Models list** link दबाओ। आज (Nov 2026) चलने वाले: Groq `openai/gpt-oss-120b`, Gemini `gemini-3.8-flash`, OpenAI `gpt-5.4-mini`, OpenRouter `openai/gpt-oss-120b:free`।
+
+**`404` आया?** इसका मतलब model बंद हो गया (retired) — key खराब नहीं है। App खुद नए model से दोबारा कोशिश करता है; न हो तो Models list से कोई चालू model चुनो।
 Custom provider? **Setup → Base URL** में अपना OpenAI-compatible endpoint डालो (https होना चाहिए)।
 
 ---
@@ -261,6 +263,7 @@ Backup लेना है? **Setup → Export data** — drafts का JSON म
 | "Key galat ya expired hai" | नई key बनाओ, पूरी copy हुई है जाँचो |
 | "Provider tak nahi pahunch paye" | internet / WiFi जाँचो, या Base URL गलत है |
 | "429 limit" | provider की limit — 1-2 मिनट रुको या दूसरा provider चुनो |
+| "Model ... nahi mila (404)" | वो model बंद हो गया — **Models list** से चालू model चुनो |
 | Mic नहीं चल रहा | Chrome में खोलो, microphone की permission दो |
 | Home screen पर icon नहीं | Chrome ⋮ → Add to Home screen (Safari में Share menu) |
 | Drive "Connected" नहीं होता | देखो origin में सिर्फ `https://anveshix.github.io` डाला है, path नहीं |

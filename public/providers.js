@@ -14,7 +14,7 @@
     openai: {
       label: 'OpenAI',
       baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-mini',
+      model: 'gpt-5.4-mini',
       transcriptionModel: 'whisper-1',
       keyUrl: 'https://platform.openai.com/api-keys',
       note: 'Chat + voice transcription. Billing is per token; set a spend limit.'
@@ -22,15 +22,15 @@
     groq: {
       label: 'Groq',
       baseUrl: 'https://api.groq.com/openai/v1',
-      model: 'llama-3.3-70b-versatile',
-      transcriptionModel: 'whisper-large-v3',
+      model: 'openai/gpt-oss-120b',
+      transcriptionModel: 'whisper-large-v3-turbo',
       keyUrl: 'https://console.groq.com/keys',
       note: 'Very fast, generous free tier. Chat + Whisper transcription.'
     },
     gemini: {
       label: 'Google Gemini',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-      model: 'gemini-2.0-flash',
+      model: 'gemini-3.8-flash',
       transcriptionModel: '',
       keyUrl: 'https://aistudio.google.com/app/apikey',
       note: 'Free tier available. Open-key mode: transcriptions are off, browser speech still works.'
@@ -38,7 +38,7 @@
     openrouter: {
       label: 'OpenRouter',
       baseUrl: 'https://openrouter.ai/api/v1',
-      model: 'openai/gpt-4o-mini',
+      model: 'openai/gpt-oss-120b:free',
       transcriptionModel: '',
       keyUrl: 'https://openrouter.ai/keys',
       note: 'One key, many models. Check the model slug on openrouter.ai/models.'

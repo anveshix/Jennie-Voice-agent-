@@ -82,7 +82,7 @@ nano .env         # Mac / Linux → Ctrl+O, Enter, Ctrl+X
 ```dotenv
 AI_API_KEY=sk-APNI-ASLI-KEY-YAHAN
 AI_BASE_URL=https://api.openai.com/v1
-AI_MODEL=gpt-4o-mini
+AI_MODEL=gpt-5.4-mini
 AI_TRANSCRIPTION_MODEL=whisper-1
 PORT=3000
 ```
@@ -102,7 +102,7 @@ npm start
 ये दिखना चाहिए:
 ```
 Jenni is listening on http://0.0.0.0:3000
-AI provider configured for model gpt-4o-mini.
+AI provider configured for model gpt-5.4-mini.
 ```
 **Terminal बंद मत करें** — बंद किया तो server भी बंद हो जाएगा।
 
@@ -115,9 +115,9 @@ http://localhost:3000
 ### 9. Confirm करें
 ```
 http://localhost:3000/api/health
-→ {"configured":true,"transcriptionConfigured":true,"model":"gpt-4o-mini"}
+→ {"configured":true,"transcriptionConfigured":true,"model":"gpt-5.4-mini"}
 ```
-App में `AI ready · gpt-4o-mini` दिखे → "नमस्ते Jenni" लिखकर भेजें।
+App में `AI ready · gpt-5.4-mini` दिखे → "नमस्ते Jenni" लिखकर भेजें।
 
 ### 10. `.env` बदलें तो restart करें
 ```sh
@@ -130,9 +130,9 @@ F5        # browser refresh
 
 | Provider | `AI_BASE_URL` | `AI_MODEL` / transcription |
 | --- | --- | --- |
-| OpenAI (default) | `https://api.openai.com/v1` | `gpt-4o-mini` / `whisper-1` |
-| Groq | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` / `whisper-large-v3` |
-| OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-4o-mini` / खाली |
+| OpenAI (default) | `https://api.openai.com/v1` | `gpt-5.4-mini` / `whisper-1` |
+| Groq | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` / `whisper-large-v3-turbo` |
+| OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-oss-120b:free` / खाली |
 | Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | AI Studio का current model ID / खाली |
 
 Model नाम बदलते रहते हैं — अपने provider की current docs से मिला लें। जहाँ audio transcription न हो, वहाँ `AI_TRANSCRIPTION_MODEL=` खाली रखें; browser speech recognition पहले से काम कर रहा है।
@@ -145,7 +145,7 @@ Model नाम बदलते रहते हैं — अपने provider
 | `AI is not configured...` | `.env` खाली या restart नहीं | स्टेप 4–6, `Ctrl+C` → `npm start` |
 | `AI provider rejected its server-side credentials` | key गलत/expired | नई key, `AI_BASE_URL` से मिलाएँ |
 | `Could not reach the configured AI provider` | internet / firewall / गलत URL | URL जाँचें, `https` |
-| `HTTP 404` | पुराना `AI_MODEL` | provider की Models list |
+| `HTTP 404` | पुराना `AI_MODEL` (model बंद हो गया) — key खराब नहीं है | provider की Models list से चालू model |
 | `429 rate-limiting` | limit / credit | रुकें, quota जाँचें |
 | `does not offer transcription` | audio endpoint नहीं | `AI_TRANSCRIPTION_MODEL=` खाली |
 | `Port 3000 already in use` | port busy | `PORT=3001` → `localhost:3001` |
@@ -215,7 +215,7 @@ Server उस एक-बार वाले code को refresh token में 
 ## सत्यापन (इस session में चेक किया गया)
 
 - `npm start` → `Jenni is listening on http://0.0.0.0:3000` + `AI provider not configured. Add server-side settings to .env.`
-- `GET /api/health` → `{"configured":false,"transcriptionConfigured":false,"model":"gpt-4o-mini"}` — यानी server मिल रहा है, सिर्फ key बाकी है।
+- `GET /api/health` → `{"configured":false,"transcriptionConfigured":false,"model":"gpt-5.4-mini"}` — यानी server मिल रहा है, सिर्फ key बाकी है।
 - `npm test` → **27/27 pass** (17 मूल + 10 connections वाले)।
 - `GET /api/connections` → सिर्फ flags और mode लौटाता है, कोई token नहीं।
 - `POST /api/connections/telegram/send` बिना setup → `400 TELEGRAM_NOT_CONFIGURED`; गलत client ID → `400 DRIVE_CLIENT_SHAPE`।
