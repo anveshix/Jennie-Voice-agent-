@@ -319,3 +319,9 @@ Skills (official letters, lesson plans, result diagnostics, planner, commerce tu
 - **Fewer false triggers**: questions ("remember when…?", "notice kya hota hai?") are not commands or delegations.
 - **Offline**: clear message instead of a retry loop.
 - **Server**: set `JENNI_ACCESS_TOKEN` when the server is reachable beyond your own computer; `/api/chat`, `/api/transcribe` and `/api/connections/*` then need `X-Jenni-Token` (the web UI prompts once).
+
+## Encrypted chat history
+
+With a PIN set, **chat, drafts and memory** are stored only as AES-256-GCM blobs (`*_v1_enc`), under a key derived from the PIN (PBKDF2-SHA256, 210k, own salt) that lives in memory only while unlocked. Locking (manual, idle, tab hide) clears them from memory and the page; nothing is written while locked. Setting, changing or removing the PIN re-encrypts/migrates existing data. Unlocking no longer writes the API key back to storage in plaintext. Forget the PIN and the data is unrecoverable — use Memory → Export for a backup first.
+
+Phone use (GitHub Pages app) has no server, so `JENNI_ACCESS_TOKEN` is not needed there; it only matters if you deploy the Node server. For the NeverMind bridge from the phone, set `NEVERMIND_API_TOKEN`.

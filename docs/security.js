@@ -103,6 +103,31 @@
     return new TextDecoder().decode(plain);
   }
 
+  /* ── data at rest: chat, drafts and memory ─────────────────────────────────
+     One AES-GCM key per unlock (PBKDF2 over the PIN with its own random salt),
+     held only as a non-extractable CryptoKey in memory. Every write uses a fresh
+     IV and binds the storage name as AAD, so blobs cannot be swapped between
+     keys. */
+  function newSalt() { return toBase64(randomBytes(16)); }
+  function deriveDataKey(pin, saltB64) { return deriveKey(pin, fromBase64(saltB64)); }
+
+  async function encryptJson(key, name, value) {
+    const iv = randomBytes(12);
+    const data = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(String(name)) },
+      key, new TextEncoder().encode(JSON.stringify(value))
+    );
+    return { v: 1, iv: toBase64(iv), data: toBase64(data) };
+  }
+
+  async function decryptJson(key, name, blob) {
+    const plain = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: fromBase64(blob.iv), additionalData: new TextEncoder().encode(String(name)) },
+      key, fromBase64(blob.data)
+    );
+    return JSON.parse(new TextDecoder().decode(plain));
+  }
+
   /* ── PIN strength, judged locally and only to give advice ──────────────── */
 
   function pinStrength(pin) {
@@ -206,5 +231,5 @@
     target.head.prepend(meta);
   }
 
-  return { KDF, LOCK_KEY, VAULT_KEY, seal, open, pinStrength, createLock, isSafeUrl, hasWebCrypto, applyCsp, CSP, toBase64, fromBase64 };
+  return { KDF, LOCK_KEY, VAULT_KEY, seal, open, newSalt, deriveDataKey, encryptJson, decryptJson, pinStrength, createLock, isSafeUrl, hasWebCrypto, applyCsp, CSP, toBase64, fromBase64 };
 });

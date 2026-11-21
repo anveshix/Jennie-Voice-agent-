@@ -419,7 +419,11 @@ function submit(window, text) {
     String((page.match(/class="hint"/g) || []).length));
 
   /* ── security: PIN, encrypted key, cooldown, wipe ──────────────────────── */
-  b = await boot({ cfg: null });
+  b = await boot({ cfg: null, seed: {
+    jenni_chat_v1: JSON.stringify([{ role: 'me', text: 'MARKER-PRIVATE-CHAT' }]),
+    jenni_memory_v1: JSON.stringify([{ id: 'm1', text: 'MARKER-PRIVATE-MEM', cat: 'fact', ts: 1 }]),
+    jenni_drafts_v1: JSON.stringify([{ id: 'd1', title: 't', text: 'MARKER-PRIVATE-DRAFT', at: '' }])
+  } });
   ok(b.$('gatePinWrap') !== null, 'gate offers an optional PIN');
   ok(b.window.document.querySelector('meta[http-equiv="Content-Security-Policy"]') !== null, 'a CSP meta tag is injected at boot');
   const csp = b.window.document.querySelector('meta[http-equiv="Content-Security-Policy"]').getAttribute('content');
@@ -443,12 +447,19 @@ function submit(window, text) {
   ok(b.$('secPinState').textContent === 'On', 'security panel shows the PIN as on');
   ok(b.$('secKeyState').textContent === 'Encrypted', 'security panel shows the key encrypted');
 
+  const LSx = b.window.localStorage;
+  const allStored = Object.keys(LSx).map((k) => LSx.getItem(k)).join('|');
+  ok(!allStored.includes('MARKER-PRIVATE'), 'no chat/memory/draft text is readable in storage after PIN');
+  ok(['chat', 'memory', 'drafts'].every((n) => LSx.getItem('jenni_' + n + '_v1_enc') && LSx.getItem('jenni_' + n + '_v1') === null), 'chat, memory and drafts are stored only as encrypted blobs');
+  ok(JSON.parse(LSx.getItem('jenni_chat_v1_enc')).data && JSON.parse(LSx.getItem('jenni_chat_v1_enc')).iv, 'blob is AES-GCM (iv + data)');
+
   /* locking hides the app and drops the key from memory */
   b.$('btnLockNow').click();
   await wait(80);
   ok(b.$('lockScreen').hidden === false, 'Lock now shows the lock screen');
   ok(b.$('app').hidden === true, 'the app is hidden while locked');
   ok(b.$('apiKey').value === '', 'the key field is cleared on lock');
+  ok(!b.window.document.body.textContent.includes('MARKER-PRIVATE'), 'locked app holds no chat/memory/draft text in the DOM');
 
   /* wrong PIN is rejected and counted */
   b.$('lockPin').value = '0000';
@@ -465,6 +476,9 @@ function submit(window, text) {
   ok(b.$('lockScreen').hidden === true, 'the right PIN unlocks');
   ok(b.$('app').hidden === false, 'the app comes back');
   ok(b.$('brandMeta').textContent.includes('Groq'), 'the provider is restored from the vault', b.$('brandMeta').textContent);
+  ok(b.window.localStorage.getItem('jenni_cfg_v1') === null, 'unlocking does not write the key back in plaintext');
+  ok(b.window.document.body.textContent.includes('MARKER-PRIVATE-CHAT'), 'chat history is decrypted after the right PIN');
+  ok(b.window.document.body.textContent.includes('MARKER-PRIVATE-MEM'), 'memory is decrypted after the right PIN');
 
   /* the setup field shows a mask, never the real key */
   b.$('btnOpenSetup').click();

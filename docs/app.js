@@ -20,6 +20,7 @@
     voiceOn: 'jenni_voice_on', // master voice switch ('0' = off)
     memory: 'jenni_memory_v1', // long-term memory (local only, wiped by panic)
     lock: 'jenni_lock_v1',     // PIN settings + config
+    dk: 'jenni_dk_v1',         // salt for the data key (not secret)
     vault: 'jenni_vault_v1'    // the encrypted API key
   };
 
@@ -110,6 +111,7 @@
     cfg: readJson(LS.config, null),
     drafts: readJson(LS.drafts, []),
     chat: readJson(LS.chat, []),
+    memory: readJson(LS.memory, []),
     drive: readJson(LS.drive, { clientId: '' }),
     driveToken: readJson(LS.driveToken, null),
     busy: false,
@@ -432,8 +434,47 @@
     toast(on ? 'Voice ON' : 'Voice OFF', false);
   }
 
-  function loadMemory() { return BRAIN ? readJson(LS.memory, []) : []; }
-  function saveMemory(list) { writeJson(LS.memory, list); paintMemory(); }
+  function loadMemory() { return BRAIN ? state.memory : []; }
+  function saveMemory(list) { state.memory = list; persist('memory'); paintMemory(); }
+
+  /* ── encrypted storage for chat, drafts and memory ─────────────────────────
+     With a PIN set, these live only as AES-GCM blobs (`<key>_enc`). While the
+     app is locked nothing is written and nothing is held in memory. */
+  const writeChain = {};
+  function persist(name) {
+    const key = LS[name];
+    const value = name === 'chat' ? state.chat.filter((m) => !m.pending) : state[name];
+    if (!security.enabled) return Promise.resolve(writeJson(key, value));
+    const dataKey = security.dataKey;
+    if (!dataKey) return Promise.resolve(false);              // locked: never fall back to plaintext
+    writeChain[name] = (writeChain[name] || Promise.resolve())
+      .then(() => SEC.encryptJson(dataKey, key, value))
+      .then((blob) => { localStorage.setItem(key + '_enc', JSON.stringify(blob)); localStorage.removeItem(key); return true; })
+      .catch(() => { toast('Data encrypt/save nahi ho paya', true); return false; });
+    return writeChain[name];
+  }
+  const persistAll = () => Promise.all(['chat', 'drafts', 'memory'].map(persist));
+
+  async function initDataKey(pin, fresh) {
+    let salt = localStorage.getItem(LS.dk);
+    if (!salt || fresh) { salt = SEC.newSalt(); localStorage.setItem(LS.dk, salt); }
+    security.dataKey = await SEC.deriveDataKey(pin, salt);
+  }
+
+  /* Load the three stores after unlock; migrate any legacy plaintext copy. */
+  async function hydrate() {
+    for (const name of ['chat', 'drafts', 'memory']) {
+      const key = LS[name];
+      const raw = localStorage.getItem(key + '_enc');
+      if (raw && security.dataKey) {
+        try { state[name] = await SEC.decryptJson(security.dataKey, key, JSON.parse(raw)); }
+        catch (error) { state[name] = []; toast('Ek saved data padha nahi ja saka (' + name + ')', true); }
+      } else {
+        state[name] = readJson(key, []);
+        if (security.enabled && security.dataKey && localStorage.getItem(key)) await persist(name);   // encrypt + remove plaintext
+      }
+    }
+  }
 
   function personaPrompt(userText) {
     return [
@@ -696,7 +737,7 @@
     } finally {
       state.busy = false;
       $('btnSend').disabled = false;
-      writeJson(LS.chat, state.chat.filter((m) => !m.pending));
+      persist('chat');
       paintChat();
     }
 
@@ -711,7 +752,7 @@
           const title = docTitleFor(clean, reply);
           const built = DOCS.buildFile(title, reply, asked ? clean : '');
           last.doc = { title, text: reply, format: built.format, name: built.name };
-          writeJson(LS.chat, state.chat.filter((m) => !m.pending));
+          persist('chat');
           paintChat();
           toast(`File ready (.${built.format}) — neeche Download dabao`, false);
         }
@@ -1164,7 +1205,7 @@
     const title = String(text).split('\n')[0].replace(/[#*_`>]/g, '').trim().slice(0, 60) || 'Draft';
     state.drafts.unshift({ id: String(now()), title, text, at: new Date().toISOString() });
     state.drafts = state.drafts.slice(0, 200);
-    writeJson(LS.drafts, state.drafts);
+    persist('drafts');
     paintDrafts();
     toast('Draft save ho gaya');
   }
@@ -1235,7 +1276,7 @@
     list.querySelectorAll('[data-drive]').forEach((b) => b.addEventListener('click', () => uploadDraft(b.dataset.send)));
     list.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => {
       state.drafts = state.drafts.filter((d) => d.id !== b.dataset.del);
-      writeJson(LS.drafts, state.drafts);
+      persist('drafts');
       paintDrafts();
     }));
   }
@@ -1636,7 +1677,7 @@
         if (Array.isArray(data.drafts)) {
           const known = new Set(state.drafts.map((d) => d.id));
           state.drafts = [...data.drafts.filter((d) => d && d.id && !known.has(d.id)), ...state.drafts];
-          writeJson(LS.drafts, state.drafts);
+          persist('drafts');
           paintDrafts();
         }
         toast('Import ho gaya');
@@ -1734,7 +1775,8 @@
     lockOnHide: true,
     lock: null,
     timer: null,
-    unlockedThisSession: false
+    unlockedThisSession: false,
+    dataKey: null
   };
 
   function readLockSettings() {
@@ -1808,6 +1850,9 @@
   function lockNow(options = {}) {
     if (!security.enabled) return false;
     forgetSecret();
+    security.dataKey = null;
+    state.chat = []; state.drafts = []; state.memory = [];
+    paintChat(); paintDrafts(); paintMemory();
     $('app').hidden = true;
     $('gate').hidden = true;
     $('lockScreen').hidden = false;
@@ -1818,10 +1863,12 @@
     return true;
   }
 
-  function unlockWith(pin, cfg) {
+  async function unlockWith(pin, cfg) {
     security.pin = pin;
-    state.cfg = cfg;
-    localStorage.setItem(LS.config, JSON.stringify(cfg));   // needed for the trip through the app
+    state.cfg = cfg;                       // memory only: the key is never written back in plaintext
+    await initDataKey(pin);
+    await hydrate();
+    paintMemory();
     $('lockScreen').hidden = true;
     $('gate').hidden = true;
     $('app').hidden = false;
@@ -1862,7 +1909,7 @@
     setResult('lockResult', 'Khol rahe hain…', 'busy');
     try {
       const cfg = await openVault(pin);
-      unlockWith(pin, cfg);
+      await unlockWith(pin, cfg);
     } catch (error) {
       const outcome = security.lock ? security.lock.recordFailure() : { failed: 0, cooldownMs: 0 };
       const left = Math.max(0, (security.lock ? security.lock.settings.attempts : 5) - outcome.failed);
@@ -1886,12 +1933,21 @@
     localStorage.setItem(LS.vault, JSON.stringify(sealed));
     localStorage.removeItem(LS.config);
     state.cfg = cfg;
+    await initDataKey(pin, true);          // new salt + key, then re-encrypt everything
+    await persistAll();
     return cfg;
   }
 
   /* Remove the PIN requirement, keeping the key in the clear (user's choice). */
   async function disableLockWith(pin) {
     const cfg = await openVault(pin);
+    await initDataKey(pin);
+    await hydrate();                       // make sure the decrypted data is in memory first
+    security.enabled = false;
+    await persistAll();                    // back to plaintext (user's choice)
+    ['chat', 'drafts', 'memory'].forEach((n) => localStorage.removeItem(LS[n] + '_enc'));
+    localStorage.removeItem(LS.dk);
+    security.dataKey = null;
     localStorage.setItem(LS.config, JSON.stringify(cfg));
     localStorage.removeItem(LS.vault);
     localStorage.removeItem(LS.lock);
@@ -2188,7 +2244,7 @@
     try { if (localStorage.getItem('jenni_brief_day') === day) return; } catch (e) { return; }
     const text = BRAIN.briefing(loadMemory());
     try { localStorage.setItem('jenni_brief_day', day); } catch (e) { /* ignore */ }
-    if (text) { state.chat.push({ role: 'jenni', text }); writeJson(LS.chat, state.chat.filter((m) => !m.pending)); }
+    if (text) { state.chat.push({ role: 'jenni', text }); persist('chat'); }
   }
 
   function showApp(options = {}) {
@@ -2620,6 +2676,7 @@
          nothing      → the setup gate                                        */
     if (security.enabled && localStorage.getItem(LS.vault)) {
       state.cfg = null;                      // never hold the key while locked
+      state.chat = []; state.drafts = []; state.memory = [];
       $('gate').hidden = true;
       $('app').hidden = true;
       $('lockScreen').hidden = false;
