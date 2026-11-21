@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const providers = require('./public/providers.js');
+const brain = require('./docs/brain.js');
 const { createConnections, ConnectionError } = require('./connections.js');
 
 const ROOT = __dirname;
@@ -45,6 +46,11 @@ function loadPrivateKnowledge(env = process.env) {
   }
 }
 const PRIVATE_KNOWLEDGE = loadPrivateKnowledge();
+
+function lastUserText(messages) {
+  const last = [...messages].reverse().find((m) => m.role === 'user');
+  return last ? String(last.content || '') : '';
+}
 
 class HttpError extends Error {
   constructor(status, code, message) {
@@ -587,7 +593,7 @@ function createAppServer({ env = process.env } = {}) {
           headers: providerHeaders(config, { 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             model: config.model,
-            messages: [{ role: 'system', content: SYSTEM_PROMPT + PRIVATE_KNOWLEDGE }, ...messages.slice(-18)],
+            messages: [{ role: 'system', content: SYSTEM_PROMPT + PRIVATE_KNOWLEDGE + '\n' + brain.buildContext({ text: lastUserText(messages), memories: [] }) }, ...messages.slice(-18)],
             temperature: 0.8,
             max_tokens: 600
           })

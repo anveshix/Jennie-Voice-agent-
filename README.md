@@ -297,3 +297,9 @@ so it travels with whichever provider you plug in.
 - This demo has no user login. Do not expose a server with a billable AI key to the public internet without putting it behind appropriate authentication, HTTPS, and operational protections. The API key is server-side, but an unauthenticated public endpoint could still be abused.
 
 If the AI service is not configured or a provider request fails, Jenni displays the error instead of pretending a reply or external action succeeded.
+
+## Memory, skills and autonomy (`docs/brain.js`)
+
+Jenni knows the owner profile (from `AGENTS.md`), the current IST date/time, and a long-term **memory** kept only in this browser (`jenni_memory_v1`, wiped by panic). Say "yaad rakho: …", "bhool jao …", or just talk: Jenni saves durable facts and tasks herself via hidden `[[remember/task/done/forget: …]]` tags that are stripped from the reply. Passwords/OTP-like text is never saved. Manage it in **Setup → Memory**.
+
+Skills (official letters, lesson plans, result diagnostics, planner, commerce tutor, CBSE compliance, code, sensitive advice) load only when the message matches. Add one by appending to `SKILLS` in `docs/brain.js`. The Node server uses the same module (profile, time, skills; memory stays on the phone).

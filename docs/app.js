@@ -14,6 +14,7 @@
     chat: 'jenni_chat_v1',
     drive: 'jenni_drive_v1',   // client id only
     driveToken: 'jenni_drive_tok_v1', // access token + expiry (session-ish)
+    memory: 'jenni_memory_v1', // long-term memory (local only, wiped by panic)
     lock: 'jenni_lock_v1',     // PIN settings + config
     vault: 'jenni_vault_v1'    // the encrypted API key
   };
@@ -39,6 +40,7 @@
   const SEC = window.JENNI_SECURITY || {};
   const DOCS = window.JENNI_DOCS || {};
   const GH = window.JENNI_GITHUB || {};
+  const BRAIN = window.JENNI_BRAIN;
   const $ = (id) => document.getElementById(id);
   const now = () => Date.now();
 
@@ -398,11 +400,15 @@
     ]
   };
 
-  function personaPrompt() {
+  function loadMemory() { return BRAIN ? readJson(LS.memory, []) : []; }
+  function saveMemory(list) { writeJson(LS.memory, list); paintMemory(); }
+
+  function personaPrompt(userText) {
     return [
       PERSONA.lines.join(' '),
       'Aaj: ' + new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.',
-      'Never ask for or repeat API keys, passwords or personal identifiers.'
+      'Never ask for or repeat API keys, passwords or personal identifiers.',
+      BRAIN ? BRAIN.buildContext({ text: userText, memories: loadMemory() }) : ''
     ].join(' ');
   }
 
@@ -413,7 +419,7 @@
     const history = state.chat.slice(-8)
       .filter((m) => m.text && !m.pending && !String(m.text).startsWith('Maaf karo'))
       .map((m) => ({ role: m.role === 'me' ? 'user' : 'assistant', content: m.text }));
-    return [{ role: 'system', content: personaPrompt() }, ...history, { role: 'user', content: userText }];
+    return [{ role: 'system', content: personaPrompt(userText) }, ...history, { role: 'user', content: userText }];
   }
 
   /* ══════════════════════════════════════════════════════════════ CHAT UI */
@@ -600,6 +606,11 @@
       return;
     }
 
+    if (BRAIN) {
+      const cmd = BRAIN.userCommand(clean);
+      if (cmd) { saveMemory(BRAIN.applyOps(loadMemory(), [cmd])); toast('Yaad rakh liya', false); }
+    }
+
     state.busy = true;
     $('input').value = '';
     autoGrow($('input'));
@@ -619,6 +630,11 @@
         conversationForApi(clean + repoContext),
         { maxTokens: voice.mode ? 260 : 600 }
       );
+      if (BRAIN) {
+        const parsed = BRAIN.extractOps(reply);
+        reply = parsed.text;
+        if (parsed.ops.length) { saveMemory(BRAIN.applyOps(loadMemory(), parsed.ops)); toast('Memory update ho gayi', false); }
+      }
       pending.pending = false;
       pending.text = reply;
       setStatus('ok', providerName() + ' · ' + state.cfg.model);
@@ -1102,6 +1118,33 @@
     writeJson(LS.drafts, state.drafts);
     paintDrafts();
     toast('Draft save ho gaya');
+  }
+
+  function paintMemory() {
+    const host = $('memoryList');
+    if (!host || !BRAIN) return;
+    const list = loadMemory();
+    host.textContent = '';
+    if (!list.length) {
+      const empty = document.createElement('p');
+      empty.className = 'room-result';
+      empty.textContent = 'Abhi kuch yaad nahi. "yaad rakho: ..." bolo ya neeche likho.';
+      host.appendChild(empty);
+    }
+    list.slice().reverse().forEach((m) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const label = document.createElement('span');
+      label.textContent = '[' + m.cat + '] ' + m.text;
+      label.style.flex = '1';
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'btn btn--ghost';
+      del.textContent = 'Delete';
+      del.addEventListener('click', () => saveMemory(loadMemory().filter((x) => x.id !== m.id)));
+      row.append(label, del);
+      host.appendChild(row);
+    });
   }
 
   function paintDrafts() {
@@ -2213,6 +2256,16 @@
     $('btnVoiceStart').addEventListener('click', () => { closeSheets(); startVoiceMode(); });
 
     $('btnOpenSetup').addEventListener('click', () => openSheet('setup'));
+    if ($('btnMemAdd') && BRAIN) {
+      $('btnMemAdd').addEventListener('click', () => {
+        const box = $('memInput');
+        if (!box.value.trim()) return;
+        saveMemory(BRAIN.addMemory(loadMemory(), box.value, null));
+        box.value = '';
+      });
+      $('btnMemClear').addEventListener('click', () => { if (confirm('Saari memory delete karein?')) saveMemory([]); });
+      paintMemory();
+    }
 
     document.querySelectorAll('.tab').forEach((tab) => {
       tab.addEventListener('click', () => {

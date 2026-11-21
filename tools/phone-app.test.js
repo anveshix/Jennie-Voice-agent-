@@ -169,6 +169,7 @@ async function boot(options = {}) {
   window.eval(fs.readFileSync(path.join(ROOT, 'security.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'docs.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'github.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'brain.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'));
   await wait(180);
 
