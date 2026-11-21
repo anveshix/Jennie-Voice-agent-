@@ -201,6 +201,32 @@ test('does not leak provider error bodies or secret keys', async () => {
   }
 });
 
+test('a retired model id (404) is explained as a model problem, not a generic error', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({ error: { message: 'model_not_found' } }), {
+    status: 404,
+    headers: { 'Content-Type': 'application/json' }
+  });
+  try {
+    await withServer(TEST_ENV, async (port) => {
+      const result = await request(port, '/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'Hello' }] })
+      });
+      assert.equal(result.status, 502);
+      assert.equal(result.json.error.code, 'AI_MODEL_NOT_FOUND');
+      assert.match(result.json.error.message, /404/);
+      assert.match(result.json.error.message, /retired/);
+      // the failed model is named so the user knows what to replace
+      assert.equal(result.json.error.message.includes(TEST_ENV.AI_MODEL), true);
+      assert.equal(result.text.includes(TEST_ENV.AI_API_KEY), false);
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('transcribes audio through the configured provider without exposing provider credentials', async () => {
   const originalFetch = global.fetch;
   let providerRequest;

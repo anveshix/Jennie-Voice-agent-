@@ -175,7 +175,7 @@ function isLoopbackHost(hostname) {
 
 function getConfig(env = process.env) {
   const baseUrl = String(env.AI_BASE_URL || 'https://api.openai.com/v1').trim().replace(/\/+$/, '');
-  const model = String(env.AI_MODEL || 'gpt-4o-mini').trim();
+  const model = String(env.AI_MODEL || 'gpt-5.4-mini').trim();
   const transcriptionModel = String(env.AI_TRANSCRIPTION_MODEL === undefined ? 'whisper-1' : env.AI_TRANSCRIPTION_MODEL).trim();
   const apiKey = String(env.AI_API_KEY || '').trim();
   let parsedBaseUrl = null;
@@ -267,6 +267,10 @@ async function fetchProvider(config, endpoint, options) {
     }
     if (response.status === 404 && endpoint === 'audio/transcriptions') {
       throw new HttpError(502, 'TRANSCRIPTION_UNAVAILABLE', 'This AI provider does not offer the configured audio transcription endpoint. Use browser speech recognition or type your message.');
+    }
+    if (response.status === 404 && endpoint === 'chat/completions') {
+      // A retired model ID is the most common cause: providers answer 404 for it.
+      throw new HttpError(502, 'AI_MODEL_NOT_FOUND', `The AI provider has no model "${config.model}" (HTTP 404). The model may be retired — pick a current one from the provider's model list.`);
     }
     throw new HttpError(502, 'AI_PROVIDER_ERROR', `The AI provider returned an error (HTTP ${response.status}). Check its URL, model, and account configuration.`);
   }

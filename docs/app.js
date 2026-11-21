@@ -19,11 +19,11 @@
   };
 
   const PRESETS = {
-    groq: { label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', transcribe: 'whisper-large-v3', keyUrl: 'https://console.groq.com/keys' },
-    gemini: { label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.0-flash', transcribe: '', keyUrl: 'https://aistudio.google.com/app/apikey' },
-    openai: { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', transcribe: 'whisper-1', keyUrl: 'https://platform.openai.com/api-keys' },
-    openrouter: { label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini', transcribe: '', keyUrl: 'https://openrouter.ai/keys' },
-    custom: { label: 'Custom', baseUrl: '', model: '', transcribe: '', keyUrl: '' }
+    groq: { label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', model: 'openai/gpt-oss-120b', transcribe: 'whisper-large-v3-turbo', keyUrl: 'https://console.groq.com/keys', modelsUrl: 'https://console.groq.com/docs/models' },
+    gemini: { label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.8-flash', transcribe: '', keyUrl: 'https://aistudio.google.com/app/apikey', modelsUrl: 'https://ai.google.dev/gemini-api/docs/models' },
+    openai: { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.4-mini', transcribe: 'whisper-1', keyUrl: 'https://platform.openai.com/api-keys', modelsUrl: 'https://platform.openai.com/docs/models' },
+    openrouter: { label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-oss-120b:free', transcribe: '', keyUrl: 'https://openrouter.ai/keys', modelsUrl: 'https://openrouter.ai/models' },
+    custom: { label: 'Custom', baseUrl: '', model: '', transcribe: '', keyUrl: '', modelsUrl: '' }
   };
 
   const SEC = window.JENNI_SECURITY || {};
@@ -159,6 +159,7 @@
   async function callProvider(messages, options = {}) {
     const cfg = state.cfg;
     if (!cfg || !cfg.apiKey) throw new Error('Pehle Setup me API key daalo.');
+    const model = options.model || cfg.model;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs || 60000);
@@ -171,7 +172,7 @@
           Authorization: `Bearer ${cfg.apiKey}`
         },
         body: JSON.stringify({
-          model: cfg.model,
+          model,
           messages,
           temperature: 0.6
         }),
@@ -188,6 +189,13 @@
         if (response.status === 429) {
           throw new Error('Provider ki limit lag gayi (429). Thodi der baad try karo, ya doosra provider chuno.');
         }
+        if (response.status === 404) {
+          // A 404 from an OpenAI-compatible endpoint almost always means the
+          // model ID was retired or the base URL has an extra path segment.
+          const error = new Error(`Model "${model}" provider par nahi mila (404). Ye model band ho gaya ho sakta hai — naya model chuno.`);
+          error.code = 'MODEL_NOT_FOUND';
+          throw error;
+        }
         throw new Error(detail || `Provider ne error diya (HTTP ${response.status}).`);
       }
 
@@ -203,6 +211,28 @@
       throw error;
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  /**
+   * The provider answered 404 → the model ID was retired. If the user is on a
+   * known preset and its default model has moved on, try that once, remember
+   * the change, and tell them. Otherwise rethrow so the error reaches the UI.
+   */
+  async function askProvider(messages, options = {}) {
+    try {
+      return await callProvider(messages, options);
+    } catch (error) {
+      if (error.code !== 'MODEL_NOT_FOUND' || options.noRetry) throw error;
+      const cfg = state.cfg || {};
+      const preset = PRESETS[cfg.provider];
+      if (!preset || !preset.model || preset.model === cfg.model) throw error;
+
+      const reply = await callProvider(messages, Object.assign({}, options, { model: preset.model, noRetry: true }));
+      saveConfig(Object.assign({}, cfg, { model: preset.model }));
+      if (voice.mode) stopListening();
+      toast(`Purana model band tha — ab "${preset.model}" chal raha hai`, false);
+      return reply;
     }
   }
 
@@ -327,7 +357,7 @@
 
     let reply = '';
     try {
-      reply = await callProvider(conversationForApi(clean));
+      reply = await askProvider(conversationForApi(clean));
       pending.pending = false;
       pending.text = reply;
       setStatus('ok', providerName() + ' · ' + state.cfg.model);
@@ -617,6 +647,12 @@
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
+      if (response.status === 404) {
+        // the transcription model was retired → fall back to browser speech
+        // rather than nagging on every single turn
+        stopListening();
+        throw new Error(`"${cfg.transcribe}" model band lagta hai (404). Setup me naya voice-to-text model daalo, ya usse khali chhodo.`);
+      }
       throw new Error((payload && payload.error && payload.error.message) || 'Awaaz transcribe nahi hui.');
     }
     return (payload && (payload.text || '')).trim();
@@ -1113,7 +1149,17 @@
     paintSetupStatus();
   }
 
+  function paintModelLinks(provider) {
+    const preset = PRESETS[provider] || PRESETS.groq;
+    const url = preset.modelsUrl || 'https://console.groq.com/docs/models';
+    ['modelListLink', 'setupModelListLink'].forEach((id) => {
+      const link = $(id);
+      if (link) link.href = url;
+    });
+  }
+
   function paintProvGrid(active) {
+    paintModelLinks(active);
     const grid = $('provGrid');
     if (!grid) return;
     grid.innerHTML = Object.entries(PRESETS).map(([key, preset]) => `
@@ -1174,7 +1220,7 @@
     setResult('setupResult', 'Provider se baat kar rahe hain…', 'busy');
     const started = now();
     try {
-      const reply = await callProvider([{ role: 'user', content: 'Reply with the single word: ok' }], { timeoutMs: 25000 });
+      const reply = await askProvider([{ role: 'user', content: 'Reply with the single word: ok' }], { timeoutMs: 25000 });
       const ms = now() - started;
       setResult('setupResult', `Chal raha hai ✓ (${ms} ms) — model ne kaha: "${reply.slice(0, 40)}"`, 'ok');
       setStatus('ok', providerName() + ' · ' + cfg.model);
@@ -1777,6 +1823,7 @@
         $('setupBase').value = preset.baseUrl;
         $('setupModel').value = preset.model;
         $('setupTranscribe').value = preset.transcribe;
+        paintModelLinks(key);
         $('gateKeyLink').href = preset.keyUrl || '#';
         $('gateKeyLink').textContent = preset.keyUrl ? preset.label + ' par key banayein' : 'Provider docs';
       });

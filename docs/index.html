@@ -78,7 +78,10 @@
         <div class="more__body">
           <label class="label" for="setupBase">Base URL</label>
           <input class="field mono" id="setupBase" spellcheck="false" autocapitalize="off" placeholder="https://…/v1">
-          <label class="label" for="setupModel">Model</label>
+          <div class="label-row">
+            <label class="label" for="setupModel">Model</label>
+            <a class="label-row__link" id="setupModelListLink" href="https://console.groq.com/docs/models" target="_blank" rel="noopener noreferrer">Models list</a>
+          </div>
           <input class="field mono" id="setupModel" spellcheck="false" autocapitalize="off" placeholder="model ka naam">
           <label class="label" for="setupTranscribe">Voice-to-text model (khali chhodo to browser speech)</label>
           <input class="field mono" id="setupTranscribe" spellcheck="false" autocapitalize="off" placeholder="whisper-1">
@@ -296,7 +299,10 @@
     </div>
     <label class="label" for="baseUrl">Base URL</label>
     <input class="field mono" id="baseUrl" spellcheck="false" autocapitalize="off">
-    <label class="label" for="model">Model</label>
+    <div class="label-row">
+      <label class="label" for="model">Model</label>
+      <a class="label-row__link" id="modelListLink" href="https://console.groq.com/docs/models" target="_blank" rel="noopener noreferrer">Models list</a>
+    </div>
     <input class="field mono" id="model" spellcheck="false" autocapitalize="off">
     <label class="label" for="transcribe">Voice-to-text model (optional)</label>
     <input class="field mono" id="transcribe" spellcheck="false" autocapitalize="off">

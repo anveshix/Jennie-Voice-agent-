@@ -30,8 +30,8 @@ const ROOT = path.join(__dirname, '..', 'docs');
 const CFG = {
   apiKey: 'gsk_' + 'a'.repeat(30),
   baseUrl: 'https://api.groq.com/openai/v1',
-  model: 'llama-3.3-70b-versatile',
-  transcribe: 'whisper-large-v3',
+  model: 'openai/gpt-oss-120b',
+  transcribe: 'whisper-large-v3-turbo',
   provider: 'groq'
 };
 
@@ -49,6 +49,7 @@ function wait(ms) {
 }
 
 async function boot(options = {}) {
+  const retired = options.retired || null;
   const dom = new JSDOM(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'), {
     url: 'https://anveshix.github.io/Jennie-Voice-agent-/',
     runScripts: 'outside-only',
@@ -113,6 +114,12 @@ async function boot(options = {}) {
     const target = String(url);
     if (target.includes('chat/completions')) {
       if (options.fail) return { ok: false, status: 401, json: async () => ({ error: { message: 'bad key' } }) };
+      let body = {};
+      try { body = JSON.parse(fetchOptions.body || '{}'); } catch (error) { body = {}; }
+      // a retired model answers 404, exactly like a real provider
+      if (retired && body.model === retired) {
+        return { ok: false, status: 404, json: async () => ({ error: { message: 'model_not_found' } }) };
+      }
       return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'Theek hai, **sun rahi** hoon.' } }] }) };
     }
     if (target.includes('upload/drive')) return { ok: true, status: 200, json: async () => ({ id: 'f1', name: 'Draft.md' }) };
@@ -454,6 +461,42 @@ function submit(window, text) {
   await wait(200);
   const leftovers = Object.keys(b.window.localStorage).filter((k) => k.startsWith('jenni_'));
   ok(leftovers.length === 0, 'panic wipe leaves no jenni keys', leftovers.join(',') || 'clean');
+  b.dom.window.close();
+
+  /* ── a retired model id (the 404 people actually hit) ─────────────────── */
+  ok(b.$('modelListLink').getAttribute('href').includes('groq.com'), 'setup offers a live Models list link');
+  ok(b.$('setupModelListLink') !== null, 'the gate offers the same link');
+
+  /* an old saved model answers 404 → the app retries once with the preset
+     model, remembers it, and says so instead of leaving the user stuck */
+  b = await boot({
+    retired: 'llama-3.3-70b-versatile',
+    cfg: Object.assign({}, CFG, { model: 'llama-3.3-70b-versatile' })
+  });
+  submit(b.window, 'namaste');
+  await wait(700);
+  const retried = b.calls.filter((c) => c.url.includes('chat/completions'));
+  ok(retried.length === 2, 'a 404 triggers exactly one retry', String(retried.length));
+  const secondModel = JSON.parse(retried[1].options.body).model;
+  ok(secondModel === 'openai/gpt-oss-120b', 'the retry uses the current preset model', secondModel);
+  ok(b.window.localStorage.getItem('jenni_cfg_v1').includes('gpt-oss-120b'), 'the working model is saved for next time');
+  ok(b.window.document.body.textContent.toLowerCase().includes('purana model band'), 'the user is told what changed');
+  const replies = [...b.window.document.querySelectorAll('.msg--jenni')];
+  ok(replies.length > 0, 'the retry still produces a reply');
+  b.dom.window.close();
+
+  /* a custom provider has no preset to fall back to → the message must name
+     the model and the fix, not just "HTTP 404" */
+  b = await boot({
+    retired: 'my-old-model',
+    cfg: Object.assign({}, CFG, { provider: 'custom', model: 'my-old-model', baseUrl: 'https://api.example.com/v1' })
+  });
+  submit(b.window, 'namaste');
+  await wait(700);
+  const text = b.window.document.body.textContent;
+  ok(text.includes('404'), 'a custom provider 404 is still explained');
+  ok(text.includes('my-old-model'), 'the failing model is named', text.slice(-160));
+  ok(text.toLowerCase().includes('band ho gaya'), 'the message points at retirement');
   b.dom.window.close();
 
   /* ── failures stay readable ────────────────────────────────────────────── */
