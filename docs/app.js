@@ -280,7 +280,7 @@
     }
   }
 
-  async function send(text) {
+  async function send(text, options = {}) {
     const clean = String(text || '').trim();
     if (!clean || state.busy) return;
     if (!state.cfg || !state.cfg.apiKey) {
@@ -300,26 +300,31 @@
     paintChat();
     setStatus('busy');
 
+    let reply = '';
     try {
-      const reply = await callProvider(conversationForApi(clean));
+      reply = await callProvider(conversationForApi(clean));
       pending.pending = false;
       pending.text = reply;
       setStatus('ok', providerName() + ' · ' + state.cfg.model);
     } catch (error) {
       pending.pending = false;
       pending.text = 'Maaf karo, jawab nahi mila.\n\n' + error.message;
+      reply = 'Maaf karo, jawab nahi mila. ' + error.message;
       setStatus('error');
-      speak('Maaf karo, jawab nahi mila. ' + error.message);
     } finally {
       state.busy = false;
       $('btnSend').disabled = false;
       writeJson(LS.chat, state.chat.filter((m) => !m.pending));
       paintChat();
-      maybeSpeakLast();
     }
+
+    // Voice mode always reads the answer; typed chat only when the user asked.
+    if (options.speakAlways || voice.mode) await speak(reply);
+    else maybeSpeakLast();
+
+    if (voice.mode && !voice.stopping) scheduleListen(400);
   }
 
-  /* Voice output — only when the user turned it on. */
   function maybeSpeakLast() {
     const last = state.chat[state.chat.length - 1];
     if (!last || last.role !== 'jenni' || !last.text) return;
@@ -327,57 +332,419 @@
     speak(last.text);
   }
 
-  function speak(text) {
-    if (!window.speechSynthesis) return;
-    try {
-      const clean = String(text).replace(/[*_`#>]/g, '').slice(0, 600);
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(clean);
-      utterance.lang = /[\u0900-\u097F]/.test(clean) ? 'hi-IN' : 'en-IN';
-      utterance.rate = 1;
-      window.speechSynthesis.speak(utterance);
-    } catch (error) { /* speech is optional */ }
-  }
+  /* ══════════════════════════════════════════════════════════════ VOICE
 
-  /* ══════════════════════════════════════════════════════════════ VOICE IN */
+     Hands-free loop: listen → think → speak → listen again, until the user
+     stops it or the phone sleeps. Everything here is defensive because speech
+     APIs differ a lot between Chrome (Android, desktop) and Safari (iOS).
+     ---------------------------------------------------------------------- */
 
-  function speechRecognition() {
+  const voice = {
+    mode: false,
+    listening: false,
+    speaking: false,
+    recognition: null,
+    recorder: null,
+    chunks: [],
+    recordingTimer: null,
+    lang: localStorage.getItem('jenni_voice_lang') || 'hi-IN',
+    ttsVoice: null,
+    wakeLock: null,
+    lastHandled: '',
+    lastHandledAt: 0,
+    cooldownUntil: 0,
+    stopping: false,
+    restartTimer: null
+  };
+
+  const BCP = { 'hi-IN': 'hi-IN', 'en-IN': 'en-IN', 'en-US': 'en-US', 'en-GB': 'en-GB' };
+
+  function speechRecognitionCtor() {
     return window.SpeechRecognition || window.webkitSpeechRecognition || null;
   }
 
-  async function startListening() {
-    const Recognition = speechRecognition();
-    if (Recognition) {
-      const recognition = new Recognition();
-      recognition.lang = /[\u0900-\u097F]/.test($('input').value) ? 'hi-IN' : 'en-IN';
-      recognition.interimResults = false;
-      recognition.maxAlternatives = 1;
-      recognition.onstart = () => {
-        state.listening = true;
-        $('btnMic').classList.add('is-live');
-        setStatus('busy', 'Sun rahi hoon…');
-      };
-      recognition.onerror = (event) => {
-        state.listening = false;
-        $('btnMic').classList.remove('is-live');
-        setStatus('ok', providerName() + ' · ' + state.cfg.model);
-        if (event.error === 'not-allowed') toast('Microphone ki permission chahiye.', true);
-        else if (event.error !== 'aborted') toast('Awaaz samajh nahi aayi. Dobara try karo.', true);
-      };
-      recognition.onresult = (event) => {
-        const said = event.results[0][0].transcript;
-        $('input').value = said;
-        autoGrow($('input'));
-        send(said);
-      };
-      recognition.onend = () => {
-        state.listening = false;
-        $('btnMic').classList.remove('is-live');
-      };
-      try { recognition.start(); } catch (error) { toast('Mic abhi shuru nahi ho paya.', true); }
+  function hasRecorder() {
+    return Boolean(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  }
+
+  /* ── speech output ─────────────────────────────────────────────────────── */
+
+  function pickVoice(lang) {
+    if (!window.speechSynthesis) return null;
+    const voices = window.speechSynthesis.getVoices() || [];
+    if (!voices.length) return null;
+    const exact = voices.find((v) => v.lang === lang);
+    if (exact) return exact;
+    const prefix = lang.split('-')[0];
+    return voices.find((v) => (v.lang || '').toLowerCase().startsWith(prefix)) || null;
+  }
+
+  /* Strip things a voice should not read aloud (markdown, code, urls, emoji). */
+  function speakableText(raw) {
+    let text = String(raw || '');
+    text = text.replace(/```[\s\S]*?```/g, ' ');
+    text = text.replace(/`([^`]*)`/g, '$1');
+    text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+    text = text.replace(/https?:\/\/\S+/g, ' ');
+    text = text.replace(/[*_#>|]/g, '');
+    text = text.replace(/^\s*[-•]\s*/gm, '');
+    text = text.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '');
+    text = text.replace(/\s+/g, ' ').trim();
+    return text.slice(0, 900);
+  }
+
+  function speak(text) {
+    return new Promise((resolve) => {
+      const clean = speakableText(text);
+      if (!clean || !window.speechSynthesis) { resolve(false); return; }
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(clean);
+        const lang = voice.lang;
+        utterance.lang = lang;
+        const chosen = voice.ttsVoice || pickVoice(lang);
+        if (chosen) utterance.voice = chosen;
+        utterance.rate = 1;
+        utterance.pitch = 1;
+        utterance.volume = 1;
+        voice.speaking = true;
+        paintVoiceUi();
+        utterance.onend = () => { voice.speaking = false; paintVoiceUi(); resolve(true); };
+        utterance.onerror = () => { voice.speaking = false; paintVoiceUi(); resolve(false); };
+        window.speechSynthesis.speak(utterance);
+      } catch (error) {
+        voice.speaking = false;
+        paintVoiceUi();
+        resolve(false);
+      }
+    });
+  }
+
+  function stopSpeaking() {
+    if (window.speechSynthesis) {
+      try { window.speechSynthesis.cancel(); } catch (error) { /* ignore */ }
+    }
+    voice.speaking = false;
+    paintVoiceUi();
+  }
+
+  /* ── speech input (Chrome, Android, Edge) ──────────────────────────────── */
+
+  function buildRecognition() {
+    const Ctor = speechRecognitionCtor();
+    if (!Ctor) return null;
+    const recognition = new Ctor();
+    recognition.lang = voice.lang;
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      voice.listening = true;
+      paintVoiceUi();
+    };
+
+    recognition.onresult = (event) => {
+      let finalText = '';
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        if (result.isFinal) finalText += result[0].transcript;
+        else interim += result[0].transcript;
+      }
+      if (interim) setTranscript(interim, false);
+      if (finalText) {
+        setTranscript(finalText, true);
+        handleVoiceInput(finalText);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      voice.listening = false;
+      paintVoiceUi();
+      const code = event && event.error;
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
+        voice.mode = false;
+        paintVoiceUi();
+        toast('Mic ki permission chahiye — browser settings me allow karo.', true);
+        return;
+      }
+      if (code === 'no-speech' || code === 'aborted') {
+        if (voice.mode) scheduleListen(700);
+        return;
+      }
+      if (code === 'network') {
+        toast('Speech service tak nahi pahunch paye — internet check karo.', true);
+        if (voice.mode) scheduleListen(1400);
+        return;
+      }
+      if (voice.mode) scheduleListen(900);
+    };
+
+    recognition.onend = () => {
+      voice.listening = false;
+      paintVoiceUi();
+      // never restart while the loop is being torn down or the answer is playing
+      if (voice.mode && !voice.speaking && !voice.stopping && !state.busy) scheduleListen(420);
+    };
+
+    return recognition;
+  }
+
+  function scheduleListen(delay) {
+    clearTimeout(voice.restartTimer);
+    voice.restartTimer = setTimeout(() => {
+      if (voice.mode && !state.busy && !voice.speaking) listenOnce();
+    }, delay);
+  }
+
+  function listenOnce() {
+    if (!voice.mode || voice.speaking || state.busy) return;
+    const Ctor = speechRecognitionCtor();
+    if (!Ctor) { fallbackRecording(); return; }
+    try {
+      if (!voice.recognition) voice.recognition = buildRecognition();
+      voice.recognition.lang = voice.lang;
+      voice.recognition.start();
+    } catch (error) {
+      /* "already started" is harmless; anything else retries shortly */
+      scheduleListen(600);
+    }
+  }
+
+  function stopListening() {
+    if (voice.recognition) {
+      try { voice.recognition.abort(); } catch (error) { /* ignore */ }
+    }
+    voice.listening = false;
+    paintVoiceUi();
+  }
+
+  /* Tear the loop down without letting the abort's own onend restart it. */
+  function haltLoop() {
+    voice.stopping = true;
+    clearTimeout(voice.restartTimer);
+    voice.restartTimer = null;
+    stopListening();
+    setTimeout(() => { voice.stopping = false; }, 120);
+  }
+
+  /* ── fallback: record audio when the browser has no speech recognition ─── */
+
+  async function fallbackRecording() {
+    if (!voice.mode) return;
+    if (!hasRecorder()) {
+      toast('Is browser me voice input nahi chalta. Chrome par kholo.', true);
+      voice.mode = false;
+      paintVoiceUi();
       return;
     }
-    toast('Is browser me speech-to-text nahi hai. Chrome par kholo.');
+    setTranscript('Bolo… (record ho raha hai)', false);
+    voice.listening = true;
+    paintVoiceUi();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      voice.chunks = [];
+      recorder.ondataavailable = (event) => { if (event.data.size) voice.chunks.push(event.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        voice.listening = false;
+        paintVoiceUi();
+        const blob = new Blob(voice.chunks, { type: recorder.mimeType || 'audio/webm' });
+        if (blob.size < 1200) { if (voice.mode) scheduleListen(500); return; }
+        try {
+          const said = await transcribeWithProvider(blob);
+          if (said) handleVoiceInput(said);
+          else if (voice.mode) scheduleListen(600);
+        } catch (error) {
+          toast(error.message, true);
+          if (voice.mode) scheduleListen(1200);
+        }
+      };
+      voice.recorder = recorder;
+      recorder.start();
+      clearTimeout(voice.recordingTimer);
+      voice.recordingTimer = setTimeout(() => {
+        if (recorder.state === 'recording') recorder.stop();
+      }, 6000);
+    } catch (error) {
+      voice.listening = false;
+      voice.mode = false;
+      paintVoiceUi();
+      toast('Mic ki permission chahiye.', true);
+    }
+  }
+
+  async function transcribeWithProvider(blob) {
+    const cfg = state.cfg;
+    if (!cfg || !cfg.transcribe) {
+      throw new Error('Voice samajhne ke liye "Voice-to-text model" Setup me bharna hoga (jaise whisper-1).');
+    }
+    const form = new FormData();
+    form.append('file', blob, 'voice.webm');
+    form.append('model', cfg.transcribe);
+    form.append('language', voice.lang.split('-')[0]);
+    const response = await fetch(cfg.baseUrl + '/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.apiKey}` },
+      body: form
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error((payload && payload.error && payload.error.message) || 'Awaaz transcribe nahi hui.');
+    }
+    return (payload && (payload.text || '')).trim();
+  }
+
+  /* ── the loop ──────────────────────────────────────────────────────────── */
+
+  function setTranscript(text, isFinal) {
+    const bar = $('voiceTranscript');
+    if (!bar) return;
+    bar.textContent = text;
+    bar.classList.toggle('is-final', Boolean(isFinal));
+    bar.hidden = !text;
+  }
+
+  function paintVoiceUi() {
+    const app = $('app');
+    if (app) {
+      app.classList.toggle('is-voice', voice.mode);
+      app.classList.toggle('is-listening', voice.listening);
+      app.classList.toggle('is-speaking', voice.speaking);
+    }
+    const button = $('btnVoice');
+    if (button) {
+      button.classList.toggle('is-live', voice.mode);
+      button.setAttribute('aria-pressed', voice.mode ? 'true' : 'false');
+    }
+    const label = $('voiceState');
+    if (label) {
+      label.textContent = !voice.mode ? 'Voice mode band'
+        : voice.speaking ? 'Bol rahi hoon…'
+          : voice.listening ? 'Sun rahi hoon…'
+            : 'Voice mode on';
+    }
+    const foot = $('composerFoot');
+    if (foot && voice.mode) {
+      foot.className = 'composer__foot is-busy';
+      foot.textContent = voice.speaking ? 'Bol rahi hoon — rukna ho to 🔇 dabao' : 'Sun rahi hoon… bolo';
+    }
+    if (voice.mode) keepAwake();
+  }
+
+  async function keepAwake() {
+    if (!('wakeLock' in navigator) || voice.wakeLock) return;
+    try {
+      voice.wakeLock = await navigator.wakeLock.request('screen');
+      voice.wakeLock.addEventListener('release', () => { voice.wakeLock = null; });
+    } catch (error) {
+      voice.wakeLock = null;
+    }
+  }
+
+  function releaseWakeLock() {
+    if (voice.wakeLock) {
+      try { voice.wakeLock.release(); } catch (error) { /* ignore */ }
+      voice.wakeLock = null;
+    }
+  }
+
+  function startVoiceMode() {
+    if (!state.cfg || !state.cfg.apiKey) {
+      openSheet('setup');
+      setResult('setupResult', 'Voice mode ke liye pehle API key save karo.', 'error');
+      return;
+    }
+    stopSpeaking();
+    voice.mode = true;
+    voice.lastHandled = '';
+    localStorage.setItem('jenni_voice_auto', '1');
+    setTranscript('', false);
+    paintVoiceUi();
+    listenOnce();
+  }
+
+  function stopVoiceMode(silent) {
+    voice.mode = false;           // first, so nothing schedules a restart
+    haltLoop();
+    stopSpeaking();
+    clearTimeout(voice.recordingTimer);
+    if (voice.recorder && voice.recorder.state === 'recording') {
+      try { voice.recorder.stop(); } catch (error) { /* ignore */ }
+    }
+    releaseWakeLock();
+    setTranscript('', false);
+    paintVoiceUi();
+    if (!silent) toast('Voice mode band');
+  }
+
+  function toggleVoiceMode() {
+    if (voice.mode) stopVoiceMode();
+    else startVoiceMode();
+  }
+
+  /* A spoken message is handled exactly like a typed one, but the reply is
+     always read aloud and then the mic opens again. Repeat guesses from the
+     recogniser are ignored so a stray echo cannot send the same thing twice. */
+  async function handleVoiceInput(rawText) {
+    const text = String(rawText || '').trim();
+    if (!text) return;
+    const norm = text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').trim();
+    if (!norm) return;
+
+    // Stop words are checked first and always win — the mic often hears the
+    // phone's own speaker, and an echo must never lock the user out.
+    if (isStopWord(norm)) {
+      stopVoiceMode();
+      return;
+    }
+
+    if (now() < voice.cooldownUntil) return;
+    if (norm === voice.lastHandled && now() - (voice.lastHandledAt || 0) < 8000) return;
+    voice.lastHandled = norm;
+    voice.lastHandledAt = now();
+
+    voice.cooldownUntil = now() + 400;
+    setTranscript(text, true);
+    await send(text, { speakAlways: true, fromVoice: true });
+  }
+
+  function isStopWord(text) {
+    return /^(ruko|ruk jao|band karo|band kar do|chup|chup ho jao|stop|stop it|shut up|bye|goodbye|alvida|ok bye|thats all|bas|bas karo)$/.test(text);
+  }
+
+  /* ── tester ────────────────────────────────────────────────────────────── */
+  function fillVoiceList() {
+    const pick = $('voicePick');
+    if (!pick || !window.speechSynthesis) return;
+    const all = window.speechSynthesis.getVoices() || [];
+    const prefix = voice.lang.split('-')[0];
+    const matching = all.filter((v) => (v.lang || '').toLowerCase().startsWith(prefix));
+    const list = matching.length ? matching : all;
+    const current = voice.ttsVoice && voice.ttsVoice.name;
+    pick.innerHTML = '<option value="">Phone ki default awaaz</option>' + list.map((v) => `
+      <option value="${escapeHtml(v.name)}">${escapeHtml(v.name)} — ${escapeHtml(v.lang || '')}</option>`).join('');
+    const chosen = list.find((v) => v.name === current) || list.find((v) => v.lang === voice.lang);
+    pick.value = chosen ? chosen.name : '';
+    pick.onchange = () => {
+      voice.ttsVoice = list.find((v) => v.name === pick.value) || null;
+      if (voice.ttsVoice) speakSample();
+    };
+  }
+
+  function speakSample() {
+    speak('Namaste, main Jenni hoon. Aap bol kar poochho, main bol kar jawab dungi.');
+  }
+
+  function toggleLanguage() {
+    voice.lang = voice.lang === 'hi-IN' ? 'en-IN' : 'hi-IN';
+    localStorage.setItem('jenni_voice_lang', voice.lang);
+    if (voice.recognition) voice.recognition.lang = voice.lang;
+    voice.ttsVoice = pickVoice(voice.lang);
+    toast(voice.lang === 'hi-IN' ? 'Bhasha: Hindi' : 'Language: English');
+    if (voice.mode) { stopListening(); scheduleListen(300); }
   }
 
   /* ══════════════════════════════════════════════════════════════ DRAFTS */
@@ -825,10 +1192,24 @@
       }
     });
 
+    /* one-shot mic: listen for a single message */
     $('btnMic').addEventListener('click', () => {
-      if (state.listening) { window.speechSynthesis && window.speechSynthesis.cancel(); return; }
-      startListening();
+      if (state.listening) { stopListening(); return; }
+      const wasMode = voice.mode;
+      voice.mode = true;
+      listenOnce();
+      voice.mode = wasMode;
     });
+
+    /* hands-free loop */
+    $('btnVoice').addEventListener('click', toggleVoiceMode);
+    $('btnStopSpeak').addEventListener('click', () => {
+      stopSpeaking();
+      if (voice.mode) scheduleListen(300);
+    });
+    $('btnVoiceLang').addEventListener('click', toggleLanguage);
+    $('btnVoiceTest').addEventListener('click', speakSample);
+    $('btnVoiceStart').addEventListener('click', () => { closeSheets(); startVoiceMode(); });
 
     $('btnOpenSetup').addEventListener('click', () => openSheet('setup'));
 
@@ -871,6 +1252,24 @@
       if (file) importData(file);
       event.target.value = '';
     });
+
+    /* voice language + voice choice */
+    const langSelect = $('voiceLangSelect');
+    if (langSelect) {
+      langSelect.value = voice.lang;
+      langSelect.addEventListener('change', () => {
+        voice.lang = BCP[langSelect.value] || 'hi-IN';
+        localStorage.setItem('jenni_voice_lang', voice.lang);
+        voice.ttsVoice = null;
+        fillVoiceList();
+        if (voice.mode) { stopListening(); scheduleListen(300); }
+      });
+    }
+    if (voice.recognition) voice.recognition.lang = voice.lang;
+    if (window.speechSynthesis) {
+      window.speechSynthesis.onvoiceschanged = () => fillVoiceList();
+      setTimeout(fillVoiceList, 300);
+    }
 
     /* voice output */
     const speakBox = $('speakToggle');
