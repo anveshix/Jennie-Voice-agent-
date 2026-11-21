@@ -337,7 +337,17 @@
     <p class="hint">Voice mode me mic khud khulta hai — aap bologi, jawab sunkar phir se sunna shuru. Rukna ho to mic button ya "🔇 Chup" dabao. Android Chrome par hands-free sabse achha chalta hai; iPhone Safari me har message ke baad mic dobara dabana pad sakta hai (Apple ki limit hai).</p>
     <p class="hint">Agar aapka provider transcription model deta hai (Groq, OpenAI), to browser speech na hone par recording provider ko bheji jaati hai.</p>
 
-    <h3 class="sheet__sub">5. Backup</h3>
+    <h3 class="sheet__sub">5. Floating bot</h3>
+    <label class="toggle-row" for="botToggle">
+      <span>
+        <strong>Screen par floating bot</strong>
+        <span class="card__meta">Kahin bhi khincho, tap karke bolo</span>
+      </span>
+      <input type="checkbox" id="botToggle" class="switch" checked>
+    </label>
+    <p class="hint">Bot ko pakad kar kahin bhi le jao — chhodne par kinare se chipak jayega. Tap = voice mode. Bot ko bin par patak kar chhupa sakte ho, yahan se wapas lao.</p>
+
+    <h3 class="sheet__sub">6. Backup</h3>
     <div class="row row--wrap">
       <button class="btn btn--small" type="button" id="btnExport">Export data</button>
       <button class="btn btn--small" type="button" id="btnImport">Import data</button>
@@ -346,6 +356,36 @@
     <p class="hint">Drafts + settings ka JSON. Key export me <strong>nahi</strong> jaati.</p>
   </div>
 </section>
+
+
+<!-- ══════════════════════════════════════════════════════════ FLOATING BOT
+     Drag it anywhere; it snaps to the nearest edge. Tap to talk, long-press
+     (or drag onto the bin) to hide it. It mirrors the voice loop state. -->
+<div class="bot" id="bot" data-side="right" style="--bot-y: 62vh" role="group" aria-label="Jenni floating bot">
+  <button class="bot__body" type="button" id="botButton" aria-label="Talk to Jenni">
+    <span class="bot__glow" aria-hidden="true"></span>
+    <span class="bot__rings" aria-hidden="true"><i></i><i></i><i></i></span>
+    <svg class="bot__face" viewBox="0 0 64 64" aria-hidden="true">
+      <ellipse class="bot__eye" cx="24" cy="27" rx="4.6" ry="5.4"/>
+      <ellipse class="bot__eye" cx="40" cy="27" rx="4.6" ry="5.4"/>
+      <path class="bot__mouth" d="M24 39c2.6 3.6 5.2 5.2 8 5.2s5.4-1.6 8-5.2"/>
+      <circle class="bot__ear" cx="10" cy="32" r="3.4"/>
+      <circle class="bot__ear" cx="54" cy="32" r="3.4"/>
+    </svg>
+    <span class="bot__wave" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+    <span class="bot__badge" id="botBadge" hidden></span>
+  </button>
+  <button class="bot__bin" type="button" id="botBin" aria-label="Hide the floating bot" hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+  </button>
+</div>
+
+<div class="bot-restore" id="botRestore" hidden>
+  <button class="bot-restore__btn" type="button" id="botShow">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M9 10h.01M15 10h.01M9.5 14.5c1.6 1.4 3.4 1.4 5 0"/></svg>
+    <span>Jenni bot</span>
+  </button>
+</div>
 
 <div class="toast-host" id="toastHost" aria-live="polite"></div>
 

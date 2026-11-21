@@ -151,6 +151,48 @@ Drive tab खोलो। सबसे ऊपर एक **बड़ा हरा
 
 ---
 
+---
+
+## 🤖 Floating bot — screen par ek chhota Jenni
+
+Screen par ek chhota gol bot tairta rehta hai. Ye **har screen par** rehta hai — Chat, Voice, Drafts, Drive, Setup.
+
+### Kya kar sakta hai
+
+| Kaam | Kaise |
+|---|---|
+| **Baat karna shuru** | bot par **tap** karo → voice mode chalu |
+| **Kahin bhi le jao** | pakad kar khincho — chhodne par **kinare se chipak** jayega |
+| **Chhupana** | pakad kar **✕ bin** par patak do |
+| **Wapas laana** | Setup → *Screen par floating bot* on, ya neeche "Jenni bot" chip |
+| **Rukna** | voice mode me bot par tap = band |
+| **Doosri screen par jawab** | Drafts/Drive/Setup khula ho, bot se hi bol do |
+
+### Bot ke rang — kaunsi halat hai
+
+| Rang | Matlab |
+|---|---|
+| **Hara** (dheere saans leta) | ready — tap karo |
+| **Hara + ghoomte rings** | sun rahi hoon, bolo |
+| **Baingani + hilte bars** | bol rahi hoon (jawab aa raha hai) |
+| **Halka peela** | soch rahi hoon |
+
+Bot ke **muh se smile** dikhta hai, aankhein kabhi-kabhi jhapakti hain (blink), aur bolte waqt muh khulta hai — bilkul chhote robot jaisa.
+
+### Bot par number
+
+Bot ke kone par chhota **number** dikhta hai jab drafts saved hon — kitne draft hain. Drafts tab par bhi badge hai, par bot se bhi pata chalta hai.
+
+### Bot kahan yaad rehta hai
+
+Aap ne bot ko jahan chhoda, agli baar wahi milega — kinara aur height dono yaad rehte hain. Bot band kiya to bhi yaad rehta hai.
+
+### Ek chhoti baat
+
+Bot **voice mode** ka hi doosra button hai — dono ek hi cheez chalate hain. Bot tab kaam ka hai jab aap doosri screen par ho aur chat kholna na chaho.
+
+---
+
 ## कौन सा provider चुनूँ?
 
 | Provider | Key कहाँ से | खर्च | Voice |
