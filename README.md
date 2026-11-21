@@ -79,14 +79,92 @@ The UI is hand-written CSS plus one small script; it needs no build step and no 
 Motion (orb pulses, aurora drift, staged reveals) is pure CSS and turns off automatically
 when the OS requests reduced motion. Icons are inline SVG, so nothing depends on an emoji font.
 
+## Send & save elsewhere (three independent options)
+
+Open **Send & save elsewhere** in the workspace rail. Each of the three options turns on
+independently — use whichever one you need and leave the others off. Nothing is connected
+until you save credentials yourself.
+
+### 1. Telegram (easiest — no OAuth, no verification)
+
+1. In Telegram open **@BotFather** → `/newbot` → pick a name.
+2. Copy the token (`123456789:ABC…`).
+3. Send your new bot any message ("hi" is enough) — a bot cannot start a chat itself.
+4. Paste the token in option 1 → **Find my chat** → choose the chat → **Save & test**.
+   Saving sends one real confirmation message, so a wrong token or chat fails loudly.
+
+Sending a draft: open a draft in the editor, then **Send draft to Telegram**. Messages are
+split at 3900 characters; anything longer is cut and the message says how many characters
+were left out.
+
+### 2. Google Drive — browser mode (client ID only, no verification)
+
+Scope is `drive.file`, which is non-sensitive: the app can only see the files **it created**
+or files you explicitly opened with it. Full Drive search needs Google verification plus a
+security assessment, so it is deliberately not requested.
+
+1. Google Cloud → new project → enable **Google Drive API**.
+2. OAuth consent screen → External → add your own email as a test user.
+3. Credentials → **OAuth client ID** → Web application.
+4. Authorized JavaScript origin: `http://localhost:3000` (or your HTTPS tunnel URL).
+5. Paste the client ID (ends with `.apps.googleusercontent.com`) → **Save client ID** → **Connect Google**.
+
+The token is issued by Google Identity Services in the browser and lasts about an hour; the
+upload goes straight from the browser to Google. The server never sees the token, and the app
+asks for no client secret.
+
+### 3. Google Drive — server mode (background upload)
+
+1. Use the same OAuth client, and copy the **client secret** too (`GOCSPX-…`).
+2. Register a redirect URI, for example `https://your-tunnel.example/oauth2callback`.
+3. Paste secret + redirect URI in option 3 → **Show Google link** → open it → allow.
+4. Copy the `?code=` value from the redirect URL → paste it → **Finish connection**.
+
+The server swaps that one-time code for a refresh token, so uploads keep working while the
+browser is closed. The refresh token is stored in `storage/connections.json` (mode `600`,
+git-ignored) and is never returned to any browser — treat it like an API key.
+
+### Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/connections` | Status only: flags, hints, mode. Never tokens. |
+| `DELETE` | `/api/connections` | Forget everything — loopback only |
+| `POST` | `/api/connections/telegram/chats` | List chats that messaged the bot — loopback only |
+| `POST` `DELETE` | `/api/connections/telegram` | Save (with a real test send) / forget — loopback only |
+| `POST` | `/api/connections/telegram/test` | Send a test message — loopback only |
+| `POST` | `/api/connections/telegram/send` | Send the open draft (LAN allowed, 20/min) |
+| `POST` | `/api/connections/drive` | Save client ID / secret / mode — loopback only |
+| `POST` | `/api/connections/drive/code` | Exchange `?code=` for a refresh token — loopback only |
+| `POST` | `/api/connections/drive/upload` | Upload markdown (LAN allowed, 20/min) |
+| `GET` | `/api/connections/drive/files` | Recent app files (LAN allowed, 20/min) |
+| `DELETE` | `/api/connections/drive` | Forget Drive — loopback only |
+
+Changing credentials is loopback-only, exactly like the API Room. Sending and uploading are
+allowed from a phone on the same Wi-Fi because the destination is already fixed and the token
+never leaves the server.
+
 ## Privacy and limits
 
 - Each chat request sends the user's message and recent turns from the current tab to the configured AI provider. The conversation stays in tab memory only; it is not written to the app's server or browser storage.
 - Local notes, tasks, and drafts remain in this browser and are **not** automatically attached to AI requests.
 - The local PIN is only a browser convenience and is not account authentication or a security boundary.
-- No Google Drive account, email, messaging destination, or remote send action is configured. Saving an AI response creates a local browser draft only.
-- The API Room key lives in `storage/settings.json` on this machine (mode `600`, git-ignored). It is never
-  returned to any browser, but anyone with shell access to the computer can read it — treat it like an SSH key.
+- No connection is configured out of the box. Saving an AI response creates a local browser draft only; nothing leaves the machine until you connect Telegram or Drive yourself and press send/upload.
+- The API Room key lives in `storage/settings.json` on this machine (mode `600`, git-ignored). The Telegram
+  bot token, Drive client secret, and Drive refresh token live in `storage/connections.json`, also mode `600`
+  and git-ignored. None of them are ever returned to a browser, but anyone with shell access can read them —
+  treat them like SSH keys. **Disconnect** deletes them.
+
+### What each option can and cannot do
+
+| | Telegram | Drive browser | Drive server |
+|---|---|---|---|
+| Credentials you paste | bot token | client ID | client ID + secret |
+| Google verification | not needed | not needed | not needed |
+| Scope | your bot chat only | `drive.file` | `drive.file` |
+| Works when browser is closed | — | no (1-hour token) | yes |
+| Storage of a secret on the server | bot token | none | client secret + refresh token |
+| Needs HTTPS / tunnel | no | yes, on a phone | yes |
 - Do not put confidential or sensitive information into chat unless the configured AI provider is approved to process it.
 - This demo has no user login. Do not expose a server with a billable AI key to the public internet without putting it behind appropriate authentication, HTTPS, and operational protections. The API key is server-side, but an unauthenticated public endpoint could still be abused.
 

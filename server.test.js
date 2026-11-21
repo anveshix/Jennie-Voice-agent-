@@ -4,6 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
   createAppServer,
   getConfig,
@@ -18,6 +20,7 @@ const {
   SETTINGS_FILE
 } = require('./server');
 const { validateSettings, PRESETS } = require('./public/providers.js');
+const { createConnections, ConnectionError } = require('./connections.js');
 
 /** Keep the developer's real storage/settings.json out of the way. */
 async function withCleanSettings(callback) {
@@ -444,5 +447,245 @@ test('stored settings beat .env, and .env still works when the room is empty', a
 
     clearStoredSettings();
     assert.equal(resolveConfig(env).source, 'env');
+  });
+});
+
+/* ------------------------------------------------------------------ connections */
+
+async function withTempStore(callback) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenni-conn-'));
+  try {
+    return await callback(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function fakeFetch(handler) {
+  const calls = [];
+  const impl = async (url, options = {}) => {
+    calls.push({ url, options });
+    const result = await handler(url, options);
+    return {
+      ok: result.status >= 200 && result.status < 300,
+      status: result.status,
+      json: async () => result.body
+    };
+  };
+  impl.calls = calls;
+  return impl;
+}
+
+test('connections start empty and expose no secrets', async () => {
+  await withTempStore((dir) => {
+    const conn = createConnections({ storageDir: dir, requestIsLocal: () => true });
+    const status = conn.status();
+    assert.equal(status.telegram.configured, false);
+    assert.equal(status.drive.mode, 'off');
+    assert.equal(/sk-|gsk_|refresh-|GOCSPX-/.test(JSON.stringify(status)), false, 'no secret values are exposed');
+    assert.equal(status.telegram.botTokenHint, '');
+  });
+});
+
+test('telegram validates the token shape before calling the network', async () => {
+  await withTempStore(async (dir) => {
+    const fetchImpl = fakeFetch(() => ({ status: 200, body: { ok: true, result: [] } }));
+    const conn = createConnections({ storageDir: dir, requestIsLocal: () => true, fetchImpl });
+    await assert.rejects(() => conn.findChats(''), (error) => error instanceof ConnectionError && error.code === 'TELEGRAM_TOKEN_REQUIRED');
+    await assert.rejects(() => conn.findChats('hello'), (error) => error.code === 'TELEGRAM_TOKEN_SHAPE');
+    assert.equal(fetchImpl.calls.length, 0);
+  });
+});
+
+test('telegram chat discovery reads updates and de-duplicates', async () => {
+  await withTempStore(async (dir) => {
+    const token = '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi';
+    const fetchImpl = fakeFetch(() => ({
+      status: 200,
+      body: {
+        ok: true,
+        result: [
+          { message: { chat: { id: 42, first_name: 'Anu', username: 'anu', type: 'private' }, text: 'hi' } },
+          { message: { chat: { id: 42, first_name: 'Anu', type: 'private' }, text: 'again' } },
+          { message: { chat: { id: -100, title: 'Family', type: 'group' }, text: 'hello' } }
+        ]
+      }
+    }));
+    const conn = createConnections({ storageDir: dir, requestIsLocal: () => true, fetchImpl });
+    const chats = await conn.findChats(token);
+    assert.equal(chats.length, 2);
+    assert.equal(chats[0].id, '42');
+    assert.equal(chats[0].username, '@anu');
+    assert.equal(chats[1].id, '-100');
+    assert.match(fetchImpl.calls[0].url, /getUpdates$/);
+  });
+});
+
+test('saving telegram verifies with getMe + sendMessage and stores the chat', async () => {
+  await withTempStore(async (dir) => {
+    const token = '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi';
+    const fetchImpl = fakeFetch((url) => {
+      if (url.endsWith('/getMe')) return { status: 200, body: { ok: true, result: { username: 'jenni_bot' } } };
+      return { status: 200, body: { ok: true, result: { message_id: 7 } } };
+    });
+    const conn = createConnections({ storageDir: dir, requestIsLocal: () => true, fetchImpl });
+    const saved = await conn.saveTelegram({ body: {} }, { botToken: token, chatId: '42' });
+    assert.equal(saved.configured, true);
+    assert.equal(saved.botUsername, 'jenni_bot');
+    assert.equal(saved.chatId, '42');
+    assert.equal(JSON.stringify(saved).includes(token), false);
+
+    const status = conn.status();
+    assert.equal(status.telegram.botTokenHint.endsWith('fghi'), true);
+    assert.equal(JSON.stringify(status).includes(token), false);
+
+    const mode = fs.statSync(path.join(dir, 'connections.json')).mode & 0o777;
+    assert.equal(mode.toString(8), '600');
+  });
+});
+
+test('telegram actions require a saved connection and honour the local-only rule', async () => {
+  await withTempStore(async (dir) => {
+    const local = createConnections({ storageDir: dir, requestIsLocal: () => true, fetchImpl: fakeFetch(() => ({ status: 200, body: { ok: true, result: {} } })) });
+    await assert.rejects(() => local.sendTelegram({ text: 'x' }), (error) => error.code === 'TELEGRAM_NOT_CONFIGURED');
+
+    const remote = createConnections({ storageDir: dir, requestIsLocal: () => false, fetchImpl: fakeFetch(() => ({ status: 200, body: { ok: true, result: {} } })) });
+    await assert.rejects(
+      () => remote.saveTelegram({}, { botToken: '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi', chatId: '1' }),
+      (error) => error.code === 'LOCAL_ONLY' && error.status === 403
+    );
+    assert.throws(() => remote.disconnectTelegram({}), (error) => error.code === 'LOCAL_ONLY');
+  });
+});
+
+test('telegram send clips long drafts and reports the character count', async () => {
+  await withTempStore(async (dir) => {
+    const long = 'x'.repeat(5000);
+    let sentText = '';
+    const fetchImpl = fakeFetch((url, options) => {
+      if (url.endsWith('/getMe')) return { status: 200, body: { ok: true, result: { username: 'b' } } };
+      if (url.endsWith('/sendMessage')) {
+        sentText = JSON.parse(options.body).text;
+        return { status: 200, body: { ok: true, result: { message_id: 1 } } };
+      }
+      return { status: 200, body: { ok: true, result: {} } };
+    });
+    const conn = createConnections({ storageDir: dir, requestIsLocal: () => true, fetchImpl });
+    await conn.saveTelegram({}, { botToken: '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi', chatId: '9' });
+    const result = await conn.sendTelegram({ text: long });
+    assert.equal(result.ok, true);
+    assert.match(sentText, /shortened/);
+    assert.ok(sentText.length < 5000);
+  });
+});
+
+test('drive client id is validated and secrets only kept in server mode', async () => {
+  await withTempStore(async (dir) => {
+    const conn = createConnections({ storageDir: dir, requestIsLocal: () => true, fetchImpl: fakeFetch(() => ({ status: 200, body: {} })) });
+    assert.throws(() => conn.saveDrive({}, { clientId: 'nope' }), (error) => error.code === 'DRIVE_CLIENT_SHAPE');
+
+    const browser = conn.saveDrive({}, { clientId: '123-abc.apps.googleusercontent.com', mode: 'browser' });
+    assert.equal(browser.mode, 'browser');
+    assert.equal(browser.browserReady, true);
+    assert.equal(browser.hasClientSecret, false);
+
+    assert.throws(() => conn.saveDrive({}, { mode: 'server' }), (error) => error.code === 'DRIVE_SECRET_REQUIRED');
+
+    const server = conn.saveDrive({}, { mode: 'server', clientSecret: 'GOCSPX-secret' });
+    assert.equal(server.hasClientSecret, true);
+    assert.equal(server.serverReady, false, 'no refresh token yet');
+  });
+});
+
+test('drive server mode exchanges the code and stores a refresh token', async () => {
+  await withTempStore(async (dir) => {
+    const fetchImpl = fakeFetch((url) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return { status: 200, body: { refresh_token: 'refresh-123', access_token: 'access-1', scope: 'https://www.googleapis.com/auth/drive.file' } };
+      }
+      if (url.includes('/about')) {
+        return { status: 200, body: { user: { emailAddress: 'me@example.com' } } };
+      }
+      return { status: 200, body: {} };
+    });
+    const conn = createConnections({ storageDir: dir, requestIsLocal: () => true, fetchImpl });
+    conn.saveDrive({}, { clientId: '123-abc.apps.googleusercontent.com', mode: 'server', clientSecret: 'GOCSPX-secret' });
+
+    await assert.rejects(
+      () => conn.exchangeDriveCode({}, { code: 'c', redirectUri: 'nope' }),
+      (error) => error.code === 'DRIVE_REDIRECT_REQUIRED'
+    );
+
+    const drive = await conn.exchangeDriveCode({}, { code: 'one-time-code', redirectUri: 'https://tunnel.example/oauth2callback' });
+    assert.equal(drive.serverReady, true);
+    assert.equal(drive.hasRefreshToken, true);
+    assert.equal(drive.account, 'me@example.com');
+    assert.equal(JSON.stringify(drive).includes('refresh-123'), false, 'refresh token never leaves the server');
+
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, 'connections.json'), 'utf8'));
+    assert.equal(raw.drive.refreshToken, 'refresh-123');
+  });
+});
+
+test('drive upload builds a multipart body and returns the link', async () => {
+  await withTempStore(async (dir) => {
+    let uploadBody = null;
+    const fetchImpl = fakeFetch((url, options) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return { status: 200, body: { access_token: 'access-2' } };
+      }
+      if (url.includes('upload/drive/v3/files')) {
+        uploadBody = options.body;
+        return { status: 200, body: { id: 'file-1', name: 'Test.md', webViewLink: 'https://drive.google.com/file/d/file-1/view' } };
+      }
+      return { status: 200, body: {} };
+    });
+    const conn = createConnections({ storageDir: dir, requestIsLocal: () => true, fetchImpl });
+    conn.saveDrive({}, { clientId: '123-abc.apps.googleusercontent.com', mode: 'server', clientSecret: 'GOCSPX-secret' });
+    fetchImpl.calls.length = 0;
+
+    const raw = { telegram: { botToken: '', chatId: '', savedAt: '' }, drive: { clientId: '123-abc.apps.googleusercontent.com', clientSecret: 'GOCSPX-secret', refreshToken: 'refresh-123', mode: 'server', folderId: '', account: '', savedAt: '' } };
+    fs.writeFileSync(path.join(dir, 'connections.json'), JSON.stringify(raw));
+
+    const result = await conn.uploadToDrive({ name: 'Test.md', content: '# Hello' });
+    assert.equal(result.ok, true);
+    assert.equal(result.id, 'file-1');
+    assert.match(result.link, /drive\.google\.com/);
+    assert.ok(Buffer.isBuffer(uploadBody));
+    assert.match(uploadBody.toString('utf8'), /# Hello/);
+    assert.match(uploadBody.toString('utf8'), /multipart|Content-Type: application\/json/);
+  });
+});
+
+test('drive failures surface Google’s message without the token', async () => {
+  await withTempStore(async (dir) => {
+    const fetchImpl = fakeFetch((url) => {
+      if (url.includes('oauth2.googleapis.com/token')) return { status: 200, body: { access_token: 'access-secret-xyz' } };
+      return { status: 403, body: { error: { message: 'Insufficient permissions' } } };
+    });
+    const conn = createConnections({ storageDir: dir, requestIsLocal: () => true, fetchImpl });
+    fs.writeFileSync(path.join(dir, 'connections.json'), JSON.stringify({
+      telegram: { botToken: '', chatId: '', savedAt: '' },
+      drive: { clientId: '123-abc.apps.googleusercontent.com', clientSecret: 's', refreshToken: 'r', mode: 'server', folderId: '', account: '', savedAt: '' }
+    }));
+    let captured = null;
+    try {
+      await conn.listDrive();
+    } catch (error) {
+      captured = error;
+    }
+    assert.ok(captured);
+    assert.equal(captured.message.includes('Insufficient permissions'), true);
+    assert.equal(captured.message.includes('access-secret-xyz'), false);
+  });
+});
+
+test('disconnect clears only the requested service', async () => {
+  await withTempStore((dir) => {
+    const conn = createConnections({ storageDir: dir, requestIsLocal: () => true });
+    conn.saveDrive({}, { clientId: '123-abc.apps.googleusercontent.com', mode: 'browser' });
+    const result = conn.disconnectDrive({});
+    assert.equal(result.cleared, true);
+    assert.equal(conn.status().drive.mode, 'off');
   });
 });
