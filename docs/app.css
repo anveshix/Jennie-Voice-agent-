@@ -1002,3 +1002,73 @@ code {
   .bot.is-speaking .bot__wave i, .bot.is-busy .bot__face { animation: none !important; }
   .bot__rings i { display: none; }
 }
+
+/* ══════════════════════════════════════════════════════════ LOCK + SECURITY */
+.lock .gate__card { padding-top: 30px; }
+
+.lock__badge {
+  width: 58px; height: 58px; margin: 4px auto 14px;
+  display: grid; place-items: center;
+  border-radius: 20px;
+  background: linear-gradient(150deg, rgba(94, 234, 212, .22), rgba(167, 139, 250, .22));
+  border: 1px solid rgba(255, 255, 255, .14);
+  box-shadow: 0 10px 30px -12px rgba(94, 234, 212, .45);
+}
+.lock__badge svg {
+  width: 26px; height: 26px;
+  fill: none; stroke: #5eead4; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+.lock__pin {
+  margin-top: 16px;
+  letter-spacing: .38em;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.lock__link {
+  display: block; margin: 14px auto 0;
+  background: none; border: 0; padding: 8px 12px;
+  color: var(--muted, #94a3b8);
+  font: inherit; font-size: 13px;
+  text-decoration: underline; text-underline-offset: 3px;
+  cursor: pointer;
+}
+.lock__link:hover { color: #e2e8f0; }
+
+.lock__note { margin-top: 4px; opacity: .72; font-size: 12px; }
+
+/* two columns of tiny facts — replaces four paragraphs of prose */
+.secgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+.secgrid__cell {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .045);
+  border: 1px solid rgba(255, 255, 255, .07);
+  display: grid; gap: 2px;
+}
+.secgrid__label {
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted, #94a3b8);
+}
+.secgrid__cell strong { font-size: 14px; font-weight: 600; }
+
+.btn--danger {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, .35);
+}
+.btn--danger:hover { background: rgba(248, 113, 113, .12); }
+
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted, #94a3b8);
+}

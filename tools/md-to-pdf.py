@@ -59,6 +59,7 @@ GLYPH_FIX = {
     '\u2b06': '^',      # ⬆
     '\u2b50': '*',      # ⭐
     '\U0001F512': '',   # 🔒
+    '\u2715': 'x',      # ✕
     '\ufe0f': '',       # variation selector
     '\u23ee': '',
     '\u26a0\ufe0f': ''

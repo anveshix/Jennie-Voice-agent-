@@ -227,12 +227,28 @@ Scope `drive.file` है — app सिर्फ अपनी बनाई file
 
 ---
 
-## सुरक्षा — 4 बातें जो याद रखो
+## सुरक्षा — 3 चीज़ें जो करनी हैं
 
-1. **Key सिर्फ आपके phone में** — browser की storage में। किसी Jenni server पर नहीं जाती; request सीधे provider को जाती है।
-2. **Phone खो गया?** Provider के dashboard से key **revoke** कर दो। उसके बाद पुरानी key बेकार।
-3. **Spend limit लगाओ** — OpenAI/OpenRouter में billing limit सेट करो। Groq/Gemini free tier में bill नहीं आता।
-4. **Shared/public phone पर key न डालो।** किसी को phone दे रहे हो तो पहले **Setup → Delete key** दबा दो।
+1. **PIN लगाओ** — Setup → Security → *Change PIN*. इसके बाद key phone में **encrypted** रहती है, और app खोलने पर PIN माँगता है।
+2. **Spend limit लगाओ** — OpenAI/OpenRouter में billing limit सेट करो। Groq/Gemini free tier में bill नहीं आता। Phone खो गया तो provider के dashboard से key **revoke** कर दो।
+3. **Shared phone पर न डालो** — किसी को phone दे रहे हो तो **Setup → Erase everything** दबा दो। Key, PIN, drafts, chat — सब मिट जाता है।
+
+---
+
+## 🔒 Lock — app में क्या-क्या है
+
+| चीज़ | क्या करती है | कहाँ मिलेगी |
+|---|---|---|
+| **PIN lock** | Key को AES-GCM में encrypt करके रखती है (PIN से बनी key, PBKDF2 210k rounds) | Setup → Security → Change PIN |
+| **Auto-lock** | 1 / 2 / 5 / 15 मिनट बेकार पड़े रहने पर अपने आप lock | Setup → Security |
+| **Tab छिपते ही lock** | App background में जाते ही PIN माँगता है | Setup → Security |
+| **Lock now** | तुरंत lock, key memory से हट जाती है | Setup → Security |
+| **Galat PIN की सज़ा** | 5 बार गलत → 1 मिनट, फिर 2, 4… 15 मिनट तक lock | अपने आप |
+| **Erase everything** | Key, PIN, drafts, chat, settings — सब मिटा कर नए सिरे से | Setup → Security |
+| **Masked key** | Key कभी पूरी screen पर नहीं दिखती — `gsk••••4890` जैसा mask | Setup |
+| **CSP + HTTPS check** | App सिर्फ अपनी files और https: पर बात करती है; HTTP base URL सिर्फ localhost के लिए | अपने आप |
+
+**सच बात:** browser में PIN भी उसी phone में रहता है। जिसके हाथ खुला phone और PIN आ गया, वो key पढ़ सकता है। PIN और auto-lock चोरी को **महँगा** बनाते हैं, असंभव नहीं। इसीलिए spend limit ज़रूरी है।
 
 Backup लेना है? **Setup → Export data** — drafts का JSON मिलेगा। **Key इसमें नहीं जाती** (जान-बूझकर)।
 
@@ -249,6 +265,8 @@ Backup लेना है? **Setup → Export data** — drafts का JSON म
 | Home screen पर icon नहीं | Chrome ⋮ → Add to Home screen (Safari में Share menu) |
 | Drive "Connected" नहीं होता | देखो origin में सिर्फ `https://anveshix.github.io` डाला है, path नहीं |
 | App पुराना दिख रहा है | app बंद करके फिर खोलो, या browser में reload करो |
+| PIN भूल गए | **PIN भूल गए?** दबाओ → सब erase → key दोबारा डालो (key वापस नहीं आएगी) |
+| Lock screen पर अटक गए | 5 गलत PIN के बाद 1 मिनट रुको; फिर सही PIN डालो |
 
 ---
 

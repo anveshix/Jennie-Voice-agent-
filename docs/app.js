@@ -13,7 +13,9 @@
     drafts: 'jenni_drafts_v1',
     chat: 'jenni_chat_v1',
     drive: 'jenni_drive_v1',   // client id only
-    driveToken: 'jenni_drive_tok_v1' // access token + expiry (session-ish)
+    driveToken: 'jenni_drive_tok_v1', // access token + expiry (session-ish)
+    lock: 'jenni_lock_v1',     // PIN settings + config
+    vault: 'jenni_vault_v1'    // the encrypted API key
   };
 
   const PRESETS = {
@@ -24,8 +26,15 @@
     custom: { label: 'Custom', baseUrl: '', model: '', transcribe: '', keyUrl: '' }
   };
 
+  const SEC = window.JENNI_SECURITY || {};
   const $ = (id) => document.getElementById(id);
   const now = () => Date.now();
+
+  /* Every key this app writes, so a panic wipe can be complete. */
+  const ALL_KEYS = Object.values(LS).concat([
+    'jenni_speak', 'jenni_voice_lang', 'jenni_voice_auto', 'jenni_screen',
+    'jenni_speak', 'jenni_screen', SEC.LOCK_KEY || 'jenni_lock_v1', SEC.VAULT_KEY || 'jenni_vault_v1'
+  ]);
 
   function escapeHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -119,8 +128,24 @@
     return { ok: errors.length === 0, errors, value: { baseUrl, model, apiKey, transcribe: String(input.transcribe || '').trim(), provider: input.provider || 'custom' } };
   }
 
+  /**
+   * Persist the config. If a PIN vault is active, the new key is re-sealed and
+   * the plaintext copy is removed — a settings save must never downgrade the
+   * storage to plaintext.
+   */
   function saveConfig(cfg) {
     state.cfg = cfg;
+    if (security.enabled && security.pin && SEC.seal) {
+      SEC.seal(security.pin, JSON.stringify(cfg))
+        .then((sealed) => {
+          try {
+            localStorage.setItem(LS.vault, JSON.stringify(sealed));
+            localStorage.removeItem(LS.config);
+          } catch (error) { /* private mode */ }
+        })
+        .catch(() => writeJson(LS.config, cfg));
+      return true;
+    }
     return writeJson(LS.config, cfg);
   }
 
@@ -1069,9 +1094,18 @@
 
   /* ══════════════════════════════════════════════════════════════ SETUP UI */
 
+  /* Show only the tail of a key: enough to recognise it, not enough to use it. */
+  function maskKey(key) {
+    const value = String(key || '');
+    if (value.length <= 8) return value ? '••••' : '';
+    return value.slice(0, 3) + '••••' + value.slice(-4);
+  }
+
   function fillSetupForm() {
     const cfg = state.cfg || {};
-    if ($('apiKey')) $('apiKey').value = cfg.apiKey || '';
+    // the real key stays in memory; the field shows a masked stand-in and is
+    // only written when the user actually edits it (see saveSettingsFromForm)
+    if ($('apiKey')) $('apiKey').value = cfg.apiKey ? maskKey(cfg.apiKey) : '';
     if ($('baseUrl')) $('baseUrl').value = cfg.baseUrl || PRESETS.groq.baseUrl;
     if ($('model')) $('model').value = cfg.model || PRESETS.groq.model;
     if ($('transcribe')) $('transcribe').value = cfg.transcribe || PRESETS.groq.transcribe;
@@ -1113,8 +1147,11 @@
 
   function saveSettingsFromForm() {
     const provider = state.pendingProvider || (state.cfg && state.cfg.provider) || 'groq';
+    const typed = $('apiKey').value;
+    // untouched field still holds the mask → keep the key that is already saved
+    const apiKey = /•/.test(typed) && state.cfg && state.cfg.apiKey ? state.cfg.apiKey : typed;
     const result = validateConfig({
-      apiKey: $('apiKey').value,
+      apiKey,
       baseUrl: $('baseUrl').value,
       model: $('model').value,
       transcribe: $('transcribe').value,
@@ -1127,7 +1164,7 @@
     saveConfig(result.value);
     paintSetupStatus();
     setStatus('ok', providerName() + ' · ' + result.value.model);
-    setResult('setupResult', 'Save ho gaya. Ab "Test connection" dabao.', 'ok');
+    setResult('setupResult', security.enabled ? 'Save ✓ (key encrypted)' : 'Save ✓ — PIN lagao', 'ok');
     return result.value;
   }
 
@@ -1257,6 +1294,204 @@
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('is-on', t.dataset.tab === active));
   }
 
+
+
+  /* ══════════════════════════════════════════════════════════════ SECURITY
+
+     The API key is never stored in the clear. It lives in an AES-GCM vault
+     whose key is derived from the PIN (PBKDF2, 210k rounds). Settings and
+     drafts stay readable — they are not secrets — but locking wipes the
+     decrypted key from memory and the UI.
+     ---------------------------------------------------------------------- */
+
+  const security = {
+    enabled: false,
+    idleMs: 120000,
+    lockOnHide: true,
+    lock: null,
+    timer: null,
+    unlockedThisSession: false
+  };
+
+  function readLockSettings() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(LS.lock) || '{}');
+      return {
+        enabled: Boolean(stored.enabled),
+        idleMs: Number.isFinite(stored.idleMs) ? stored.idleMs : 120000,
+        lockOnHide: stored.lockOnHide !== false
+      };
+    } catch (error) {
+      return { enabled: false, idleMs: 120000, lockOnHide: true };
+    }
+  }
+
+  function writeLockSettings() {
+    try {
+      localStorage.setItem(LS.lock, JSON.stringify({
+        enabled: security.enabled,
+        idleMs: security.idleMs,
+        lockOnHide: security.lockOnHide
+      }));
+    } catch (error) { /* private mode */ }
+  }
+
+  function vaultExists() {
+    return Boolean(localStorage.getItem(LS.vault));
+  }
+
+  async function sealKey(apiKey) {
+    if (!security.pin) throw new Error('PIN set nahi hai.');
+    const sealed = await SEC.seal(security.pin, apiKey);
+    localStorage.setItem(LS.vault, JSON.stringify(sealed));
+    localStorage.removeItem(LS.config);   // the plaintext copy must go
+  }
+
+  async function openVault(pin) {
+    const sealed = JSON.parse(localStorage.getItem(LS.vault) || 'null');
+    if (!sealed) throw new Error('Koi saved key nahi.');
+    const plain = await SEC.open(pin, sealed);
+    let cfg = null;
+    try { cfg = JSON.parse(plain); } catch (error) { throw new Error('Vault kharab hai.'); }
+    return cfg;
+  }
+
+  /* Wipe the secret from memory and repaint everything that could show it. */
+  function forgetSecret() {
+    if (state.cfg) state.cfg = null;
+    if ($('apiKey')) $('apiKey').value = '';
+    stopVoiceMode(true);
+    stopSpeaking();
+  }
+
+  function paintSecurity() {
+    const hasKey = Boolean(state.cfg && state.cfg.apiKey);
+    const keyState = $('secKeyState');
+    if (keyState) keyState.textContent = hasKey ? (vaultExists() ? 'Encrypted' : 'Plain') : '—';
+    const pinState = $('secPinState');
+    if (pinState) pinState.textContent = security.enabled ? 'On' : 'Off';
+    const autoState = $('secAutoState');
+    if (autoState) autoState.textContent = security.idleMs ? Math.round(security.idleMs / 60000) + ' min' : 'Off';
+
+    const auto = $('autoLockSelect');
+    if (auto) auto.value = String(security.idleMs);
+    const hide = $('lockOnHideToggle');
+    if (hide) hide.checked = security.lockOnHide;
+  }
+
+  /* ── locking ───────────────────────────────────────────────────────────── */
+
+  function lockNow(options = {}) {
+    if (!security.enabled) return false;
+    forgetSecret();
+    $('app').hidden = true;
+    $('gate').hidden = true;
+    $('lockScreen').hidden = false;
+    if ($('lockPin')) { $('lockPin').value = ''; setTimeout(() => $('lockPin').focus(), 60); }
+    setResult('lockResult', options.reason || '', options.reasonKind || '');
+    security.unlockedThisSession = false;
+    security.lock = security.lock || SEC.createLock({ idleMs: security.idleMs });
+    return true;
+  }
+
+  function unlockWith(pin, cfg) {
+    security.pin = pin;
+    state.cfg = cfg;
+    localStorage.setItem(LS.config, JSON.stringify(cfg));   // needed for the trip through the app
+    $('lockScreen').hidden = true;
+    $('gate').hidden = true;
+    $('app').hidden = false;
+    security.unlockedThisSession = true;
+    if (security.lock) security.lock.recordSuccess();
+    showApp();
+    setStatus('ok', providerName() + ' · ' + cfg.model);
+    startAutoLock();
+    paintSecurity();
+  }
+
+  function startAutoLock() {
+    clearInterval(security.timer);
+    if (!security.enabled || !security.idleMs) return;
+    security.lock = security.lock || SEC.createLock({ idleMs: security.idleMs });
+    security.lock.settings.idleMs = security.idleMs;
+    security.timer = setInterval(() => {
+      if ($('lockScreen').hidden === false) return;      // already locked
+      if (security.lock.isIdleExpired()) lockNow({ reason: 'Idle thi — PIN daalo.', reasonKind: 'busy' });
+    }, 5000);
+  }
+
+  function noteActivity() {
+    if (security.lock) security.lock.touching();
+  }
+
+  async function submitUnlock() {
+    const pin = $('lockPin').value;
+    if (!pin) return;
+    const cooldown = security.lock ? security.lock.remainingCooldown() : 0;
+    if (cooldown > 0) {
+      setResult('lockResult', `Thoda ruko — ${Math.ceil(cooldown / 1000)}s baad try karo.`, 'error');
+      return;
+    }
+    setResult('lockResult', 'Khol rahe hain…', 'busy');
+    try {
+      const cfg = await openVault(pin);
+      unlockWith(pin, cfg);
+    } catch (error) {
+      const outcome = security.lock ? security.lock.recordFailure() : { failed: 0, cooldownMs: 0 };
+      const left = Math.max(0, (security.lock ? security.lock.settings.attempts : 5) - outcome.failed);
+      const message = outcome.cooldownMs
+        ? `Galat PIN. ${Math.round(outcome.cooldownMs / 1000)}s ke liye locked.`
+        : `Galat PIN${left ? ` — ${left} try bache` : ''}.`;
+      setResult('lockResult', message, 'error');
+      $('lockPin').value = '';
+    }
+  }
+
+  /* ── choosing / changing the PIN ───────────────────────────────────────── */
+
+  async function setPinAndKey(pin, cfg) {
+    if (!SEC.hasWebCrypto) throw new Error('Is browser me crypto nahi — HTTPS par kholo.');
+    if (!cfg || !cfg.apiKey) throw new Error('Pehle key daalo.');
+    security.pin = pin;
+    security.enabled = true;
+    writeLockSettings();
+    const sealed = await SEC.seal(pin, JSON.stringify(cfg));
+    localStorage.setItem(LS.vault, JSON.stringify(sealed));
+    localStorage.removeItem(LS.config);
+    state.cfg = cfg;
+    return cfg;
+  }
+
+  /* Remove the PIN requirement, keeping the key in the clear (user's choice). */
+  async function disableLockWith(pin) {
+    const cfg = await openVault(pin);
+    localStorage.setItem(LS.config, JSON.stringify(cfg));
+    localStorage.removeItem(LS.vault);
+    localStorage.removeItem(LS.lock);
+    security.pin = null;
+    security.enabled = false;
+    state.cfg = cfg;
+  }
+
+  /* ── panic ─────────────────────────────────────────────────────────────── */
+
+  function panicWipe() {
+    const keys = new Set(ALL_KEYS);
+    try {
+      Object.keys(localStorage).forEach((key) => {
+        if (key.startsWith('jenni_')) keys.add(key);
+      });
+    } catch (error) { /* ignore */ }
+    keys.forEach((key) => { try { localStorage.removeItem(key); } catch (error) { /* ignore */ } });
+    try { sessionStorage.clear(); } catch (error) { /* ignore */ }
+    state.cfg = null;
+    state.chat = [];
+    state.drafts = [];
+    security.pin = null;
+    security.enabled = false;
+    clearInterval(security.timer);
+    location.replace(location.pathname);   // reload with nothing left
+  }
 
   /* ══════════════════════════════════════════════════════════════ FLOATING BOT
 
@@ -1552,9 +1787,17 @@
       const show = input.type === 'password';
       input.type = show ? 'text' : 'password';
       $('btnSetupReveal').classList.toggle('is-on', show);
+      // never leave a key on screen: re-hide on its own
+      clearTimeout(window.__revealTimer);
+      if (show) {
+        window.__revealTimer = setTimeout(() => {
+          input.type = 'password';
+          $('btnSetupReveal').classList.remove('is-on');
+        }, 12000);
+      }
     });
 
-    $('btnSaveKey').addEventListener('click', () => {
+    $('btnSaveKey').addEventListener('click', async () => {
       const provider = state.pendingProvider || 'groq';
       const result = validateConfig({
         apiKey: $('setupKey').value,
@@ -1567,18 +1810,40 @@
         setResult('gateResult', result.errors[0], 'error');
         return;
       }
-      saveConfig(result.value);
+
+      // a PIN is optional, but it is the only thing that encrypts the key
+      const pin = ($('setupPin') && $('setupPin').value) || '';
+      const pin2 = ($('setupPin2') && $('setupPin2').value) || '';
+      if (pin || pin2) {
+        if (pin !== pin2) { setResult('gateResult', 'Dono PIN same nahi hain.', 'error'); return; }
+        const strength = SEC.pinStrength(pin);
+        if (!strength.ok) { setResult('gateResult', 'PIN kam se kam 4 digits ka ho.', 'error'); return; }
+        try {
+          setResult('gateResult', 'Encrypt kar rahe hain…', 'busy');
+          await setPinAndKey(pin, result.value);
+        } catch (error) {
+          setResult('gateResult', error.message, 'error');
+          return;
+        }
+      } else {
+        saveConfig(result.value);
+      }
+
       setResult('gateResult', '', '');
+      $('gate').hidden = true;
+      $('lockScreen').hidden = true;
       showApp();
       setStatus('ok', providerName() + ' · ' + result.value.model);
-      toast('Key save ho gayi — sirf is phone me');
+      startAutoLock();
+      paintSecurity();
+      toast(security.enabled ? 'Key encrypt ho gayi — PIN yaad rakho' : 'Key save ho gayi (PIN ke bina)');
     });
 
-    $('gateSkip').addEventListener('click', (event) => {
-      event.preventDefault();
-      showApp();
-      openSheet('setup');
-    });
+    /* the PIN block only makes sense if WebCrypto is available */
+    if (!SEC.hasWebCrypto) {
+      const wrap = $('gatePinWrap');
+      if (wrap) wrap.hidden = true;
+    }
   }
 
   function wireApp() {
@@ -1649,6 +1914,14 @@
       const show = input.type === 'password';
       input.type = show ? 'text' : 'password';
       $('btnRevealKey').classList.toggle('is-on', show);
+      // never leave a key on screen: re-hide on its own
+      clearTimeout(window.__revealTimer);
+      if (show) {
+        window.__revealTimer = setTimeout(() => {
+          input.type = 'password';
+          $('btnRevealKey').classList.remove('is-on');
+        }, 12000);
+      }
     });
     $('btnSave').addEventListener('click', () => { saveSettingsFromForm(); });
     $('btnTest').addEventListener('click', testConnection);
@@ -1666,6 +1939,85 @@
       const file = event.target.files && event.target.files[0];
       if (file) importData(file);
       event.target.value = '';
+    });
+
+    /* ── lock screen ─────────────────────────────────────────────────── */
+    $('lockForm').addEventListener('submit', (event) => {
+      event.preventDefault();
+      submitUnlock();
+    });
+    $('btnForgotPin').addEventListener('click', () => {
+      const sure = window.confirm('PIN ke bina key wapas nahi milegi. Sab data delete karke shuru se shuru karein?');
+      if (sure) panicWipe();
+    });
+
+    /* ── security panel ──────────────────────────────────────────────── */
+    $('autoLockSelect').addEventListener('change', () => {
+      security.idleMs = Number($('autoLockSelect').value) || 0;
+      writeLockSettings();
+      if (security.lock) security.lock.settings.idleMs = security.idleMs;
+      startAutoLock();
+      paintSecurity();
+      toast(security.idleMs ? `Auto-lock: ${Math.round(security.idleMs / 60000)} min` : 'Auto-lock band');
+    });
+
+    $('lockOnHideToggle').addEventListener('change', () => {
+      security.lockOnHide = $('lockOnHideToggle').checked;
+      writeLockSettings();
+    });
+
+    $('btnLockNow').addEventListener('click', () => {
+      if (!security.enabled) { toast('Pehle PIN set karo', true); return; }
+      lockNow({ reason: 'Locked.', reasonKind: 'busy' });
+    });
+
+    $('btnChangePin').addEventListener('click', async () => {
+      if (!security.enabled) {
+        const pin = window.prompt('Naya PIN (4+ digits)');
+        if (pin === null) return;
+        const check = SEC.pinStrength(pin);
+        if (!check.ok) { toast('PIN kam se kam 4 digits ka ho', true); return; }
+        if (!state.cfg || !state.cfg.apiKey) { toast('Pehle key save karo', true); return; }
+        try {
+          await setPinAndKey(pin, state.cfg);
+          security.enabled = true;
+          writeLockSettings();
+          startAutoLock();
+          paintSecurity();
+          toast('PIN lag gaya — key ab encrypted hai');
+        } catch (error) { toast(error.message, true); }
+        return;
+      }
+      const current = window.prompt('Abhi ka PIN');
+      if (current === null) return;
+      try {
+        const cfg = await openVault(current);
+        const next = window.prompt('Naya PIN (4+ digits)');
+        if (next === null) return;
+        const check = SEC.pinStrength(next);
+        if (!check.ok) { toast('PIN kam se kam 4 digits ka ho', true); return; }
+        security.pin = current;
+        await setPinAndKey(next, cfg);
+        paintSecurity();
+        toast('PIN badal gaya');
+      } catch (error) {
+        toast('PIN galat', true);
+      }
+    });
+
+    $('btnPanic').addEventListener('click', () => {
+      const sure = window.confirm('Sab kuch mit jayega — key, PIN, drafts, chat. Pakka?');
+      if (sure) panicWipe();
+    });
+
+    /* count real activity so auto-lock is fair */
+    ['pointerdown', 'keydown', 'touchstart'].forEach((event) => {
+      window.addEventListener(event, noteActivity, { passive: true });
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && security.lockOnHide && security.enabled && security.unlockedThisSession) {
+        lockNow({ reason: 'App background me gaya — PIN daalo.', reasonKind: 'busy' });
+      }
     });
 
     /* voice language + voice choice */
@@ -1709,24 +2061,19 @@
     /* app-bar shortcut: open the Drive sheet from anywhere */
     $('btnDriveQuick').addEventListener('click', () => openSheet('drive'));
 
-    /* link rows inside the drive sheet */
-    $('driveLinkApp').addEventListener('click', (event) => {
-      event.preventDefault();
-      if (driveReady()) connectDrive();
-      else toast('Pehle niche client ID paste karo', true);
-    });
-    $('driveLinkDocs').addEventListener('click', (event) => {
-      event.preventDefault();
-      const link = document.createElement('a');
-      link.href = 'https://github.com/anveshix/Jennie-Voice-agent-/blob/main/Phone-Setup-Hindi.md';
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.click();
-    });
+    /* the docs link lives in the app bar menu now */
   }
 
   /* ── boot ──────────────────────────────────────────────────────────────── */
   function boot() {
+    /* Security first: a strict CSP, then the lock state decides what is shown. */
+    if (SEC.applyCsp) SEC.applyCsp(document);
+    const lockPrefs = readLockSettings();
+    security.enabled = lockPrefs.enabled;
+    security.idleMs = lockPrefs.idleMs;
+    security.lockOnHide = lockPrefs.lockOnHide;
+    security.lock = SEC.createLock ? SEC.createLock({ idleMs: security.idleMs }) : null;
+
     // restore the user's voice language and chosen voice
     voice.ttsVoice = pickVoice(voice.lang);
     if (window.speechSynthesis) {
@@ -1738,6 +2085,20 @@
     wireGate();
     wireApp();
     wireBot();
+    paintSecurity();
+
+    /* Three honest states on boot:
+         vault + PIN  → locked until the PIN is typed
+         plain config → straight in, with a nudge to add a PIN
+         nothing      → the setup gate                                        */
+    if (security.enabled && localStorage.getItem(LS.vault)) {
+      state.cfg = null;                      // never hold the key while locked
+      $('gate').hidden = true;
+      $('app').hidden = true;
+      $('lockScreen').hidden = false;
+      if ($('lockPin')) setTimeout(() => $('lockPin').focus(), 120);
+      return;
+    }
     if (state.cfg && state.cfg.apiKey) {
       // read the destination before showApp() paints the default screen
       const target = routeFromLocation() || localStorage.getItem('jenni_screen') || '';
@@ -1747,6 +2108,8 @@
       // empty on a resumed visit, so it would always fall back to chat.
       if (target && target !== 'chat') setTimeout(() => openSheet(target, { silent: true }), 80);
       else rememberScreen('chat');
+      startAutoLock();
+      if (!security.enabled) setTimeout(() => toast('PIN lock lagao — Setup → Security'), 1600);
     } else {
       state.pendingProvider = 'groq';
       document.querySelector('#gateBody [data-provider="groq"]').classList.add('is-on');

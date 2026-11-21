@@ -1,7 +1,7 @@
 /* Offline shell for the phone app. Only same-origin GETs are cached; provider
    and Google API calls always go to the network. */
-const CACHE = 'jenni-phone-v2';
-const FILES = ['./', './index.html', './app.css', './app.js', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
+const CACHE = 'jenni-phone-v3';
+const FILES = ['./', './index.html', './app.css', './security.js', './app.js', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(FILES)).then(() => self.skipWaiting()));

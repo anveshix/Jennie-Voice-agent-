@@ -226,6 +226,12 @@ never leaves the server.
 - Each chat request sends the user's message and recent turns from the current tab to the configured AI provider. The conversation stays in tab memory only; it is not written to the app's server or browser storage.
 - Local notes, tasks, and drafts remain in this browser and are **not** automatically attached to AI requests.
 - The local PIN is only a browser convenience and is not account authentication or a security boundary.
+  In the phone app it **does** encrypt the API key at rest (PBKDF2-SHA256, 210k rounds, then AES-GCM-256):
+  with a PIN set, `jenni_vault_v1` holds only ciphertext and `jenni_cfg_v1` is removed. Locking wipes the
+  key from memory; auto-lock (1-15 min) and lock-on-tab-hide re-arm it; five wrong PINs trigger a growing
+  cooldown (1 to 15 min); **Erase everything** clears every `jenni_*` key. A CSP is injected at boot
+  (`default-src 'self'`, `connect-src https:`, `object-src 'none'`, `base-uri 'none'`). What this cannot
+  do: stop someone holding the unlocked phone who also knows the PIN. See `docs/security.js`.
 - No connection is configured out of the box. Saving an AI response creates a local browser draft only; nothing leaves the machine until you connect Telegram or Drive yourself and press send/upload.
 - The API Room key lives in `storage/settings.json` on this machine (mode `600`, git-ignored). The Telegram
   bot token, Drive client secret, and Drive refresh token live in `storage/connections.json`, also mode `600`
