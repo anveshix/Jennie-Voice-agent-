@@ -262,7 +262,7 @@ code {
 /* ── app shell ──────────────────────────────────────────────────────────── */
 .app {
   position: relative; z-index: 1;
-  display: grid; grid-template-rows: auto 1fr auto auto;
+  display: grid; grid-template-rows: auto 1fr auto auto auto;
   height: 100dvh;
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
@@ -527,3 +527,91 @@ code {
 }
 .switch:checked { background: var(--mint-dim); border-color: rgba(46, 230, 168, 0.55); }
 .switch:checked::after { transform: translateX(18px); background: var(--mint); }
+
+/* ══════════════════════════════════════════════════════════════ VOICE BAR
+   The primary control on this screen: one big button that starts the
+   listen → answer → listen loop. Rings animate only while the mic is open.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.voicebar {
+  padding: 10px 14px 4px;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(5, 7, 12, 0.6), rgba(5, 7, 12, 0.95));
+  transition: background 0.4s var(--ease);
+}
+.app.is-voice .voicebar {
+  background: linear-gradient(180deg, rgba(10, 32, 26, 0.75), rgba(5, 7, 12, 0.96));
+}
+
+.voicebar__transcript {
+  margin: 0 auto 8px; max-width: 620px;
+  padding: 9px 14px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--line);
+  color: var(--muted); font-size: 0.9rem; text-align: center;
+  min-height: 38px; display: flex; align-items: center; justify-content: center;
+}
+.voicebar__transcript[hidden] { display: none; }
+.voicebar__transcript.is-final { color: var(--text); border-color: rgba(46, 230, 168, 0.35); }
+
+.voicebar__row {
+  display: flex; align-items: center; gap: 16px;
+  max-width: 620px; margin: 0 auto; padding-bottom: 6px;
+}
+
+.voicebtn {
+  position: relative; flex: 0 0 auto;
+  width: 72px; height: 72px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 0; cursor: pointer;
+  background: radial-gradient(circle at 34% 30%, #8ef7cf, #22c996 55%, #0a6b52);
+  color: #04120c;
+  box-shadow: 0 14px 34px -16px rgba(46, 230, 168, 0.9);
+  transition: transform 0.14s var(--ease), box-shadow 0.3s;
+}
+.voicebtn svg {
+  width: 30px; height: 30px; fill: none; stroke: currentColor;
+  stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round;
+  position: relative; z-index: 1;
+}
+.voicebtn:active { transform: scale(0.94); }
+.voicebtn__ring {
+  position: absolute; inset: -6px; border-radius: 50%;
+  border: 2px solid rgba(46, 230, 168, 0.5); opacity: 0;
+}
+.app.is-listening .voicebtn__ring {
+  opacity: 1;
+  animation: micRing 1.8s var(--ease) infinite;
+}
+.app.is-speaking .voicebtn {
+  background: radial-gradient(circle at 34% 30%, #c3b3ff, #7f5bf0 55%, #3b2a6b);
+  box-shadow: 0 14px 34px -16px rgba(167, 139, 250, 0.9);
+}
+.app.is-speaking .voicebtn__ring {
+  opacity: 1; border-color: rgba(167, 139, 250, 0.6);
+  animation: micRing 1.4s var(--ease) infinite;
+}
+@keyframes micRing {
+  0% { transform: scale(0.86); opacity: 0.9; }
+  70% { transform: scale(1.28); opacity: 0; }
+  100% { opacity: 0; }
+}
+
+.voicebar__side { min-width: 0; flex: 1; }
+.voicebar__state {
+  display: block; font-size: 0.82rem; color: var(--muted);
+  margin-bottom: 7px; letter-spacing: 0.01em;
+}
+.app.is-listening .voicebar__state { color: var(--mint); }
+.app.is-speaking .voicebar__state { color: var(--violet); }
+
+.voicebar__chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip-btn--sm { padding: 6px 12px; font-size: 0.78rem; }
+
+/* three pulsing dots while the answer is being spoken */
+.app.is-speaking .brand__dot { background: var(--violet); box-shadow: 0 0 12px rgba(167, 139, 250, 0.8); }
+.app.is-listening .brand__dot { background: var(--mint); box-shadow: 0 0 12px rgba(46, 230, 168, 0.9); }
+
+@media (max-width: 380px) {
+  .voicebtn { width: 64px; height: 64px; }
+  .voicebtn svg { width: 26px; height: 26px; }
+}

@@ -15,10 +15,25 @@ A serverless version lives in `docs/` and runs on GitHub Pages:
 4. Press **Test connection** to prove the key works.
 
 There is no server in that path. The phone calls the provider directly, so the key is
-stored only in that browser and never reaches a Jenni backend. Everything else works the
-same: drafts, voice input, optional spoken replies, and Google Drive upload with
-`drive.file` (client ID only — the authorized JavaScript origin is
-`https://anveshix.github.io`).
+stored only in that browser and never reaches a Jenni backend.
+
+### Voice is the main way in
+
+The phone app is built around one big mic button:
+
+1. Tap it once. The mic opens and stays in a loop: **listen → answer → speak → listen**.
+2. Talk. Your words appear as text, the reply is read aloud, then the mic reopens on its own.
+3. Say **"ruko"**, "band karo", "stop" or "bas" to end the loop — or tap the mic again.
+4. Tap **🔇 Chup** to cut a long answer short without leaving voice mode.
+
+Language is switchable from the voice bar (**हिंदी / EN**) and from Setup
+(Hindi, English India/US/UK). Setup also has a picker for the device's TTS voices plus a
+**Awaaz test karo** button. Android Chrome runs the full hands-free loop; iOS Safari allows
+one recording at a time, so there the mic has to be tapped for each turn.
+
+Drafts, optional read-aloud for typed replies, and Google Drive upload with `drive.file`
+(client ID only — the authorized JavaScript origin is `https://anveshix.github.io`) work
+on top of that.
 
 Step-by-step Hindi walkthrough: [`Phone-Setup-Hindi.md`](./Phone-Setup-Hindi.md).
 

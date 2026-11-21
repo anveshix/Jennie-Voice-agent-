@@ -97,8 +97,8 @@
     <div class="chat__inner" id="messages" aria-live="polite" aria-relevant="additions"></div>
     <div class="chat__empty" id="chatEmpty">
       <div class="orb orb--sm" aria-hidden="true"><i></i><i></i><i></i></div>
-      <p class="chat__emptyTitle">Kuch bhi poochho</p>
-      <p class="chat__emptySub">Hindi ya English me likho, ya neeche mic dabao.</p>
+      <p class="chat__emptyTitle">Bolo, main sun rahi hoon</p>
+      <p class="chat__emptySub">Neeche bada mic dabao — phir bolo, jawab suno, aur bina haath lagaye baat chalti rahegi.</p>
       <div class="suggestions" id="suggestions">
         <button class="chip-btn" type="button">Aaj ka din plan karo</button>
         <button class="chip-btn" type="button">Ek chhoti si email likho</button>
@@ -107,11 +107,28 @@
     </div>
   </main>
 
+  <div class="voicebar">
+    <p class="voicebar__transcript" id="voiceTranscript" role="status" aria-live="polite" hidden></p>
+    <div class="voicebar__row">
+      <button class="voicebtn" type="button" id="btnVoice" aria-pressed="false" aria-label="Start hands-free voice mode">
+        <span class="voicebtn__ring" aria-hidden="true"></span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+      </button>
+      <div class="voicebar__side">
+        <span class="voicebar__state" id="voiceState">Voice mode band</span>
+        <div class="voicebar__chips">
+          <button class="chip-btn chip-btn--sm" type="button" id="btnVoiceLang">हिंदी / EN</button>
+          <button class="chip-btn chip-btn--sm" type="button" id="btnStopSpeak">🔇 Chup</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <form class="composer" id="composer">
     <div class="composer__box">
-      <textarea class="composer__input" id="input" rows="1" placeholder="Message likho…" enterkeyhint="send" autocomplete="off"></textarea>
+      <textarea class="composer__input" id="input" rows="1" placeholder="Ya yahan likho…" enterkeyhint="send" autocomplete="off"></textarea>
       <div class="composer__btns">
-        <button class="mic" type="button" id="btnMic" aria-label="Speak">
+        <button class="mic" type="button" id="btnMic" aria-label="Speak one message">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
         </button>
         <button class="send" type="submit" id="btnSend" aria-label="Send">
@@ -221,12 +238,31 @@
     <h3 class="sheet__sub">4. Voice</h3>
     <label class="toggle-row" for="speakToggle">
       <span>
-        <strong>Jawab bol kar sunao</strong>
-        <span class="card__meta">Reply aane par phone padh kar sunayega</span>
+        <strong>Likh kar bhejo to bhi jawab bolo</strong>
+        <span class="card__meta">Typed chat ka reply bhi awaaz me sunao</span>
       </span>
       <input type="checkbox" id="speakToggle" class="switch">
     </label>
-    <p class="hint">Mic dabane par browser ka apna speech-to-text chalta hai (Chrome/Android par best). Agar aapka provider transcription model deta hai to recording provider ke paas jaati hai; warna browser speech hi use hota hai.</p>
+
+    <label class="label" for="voiceLangSelect">Bhasha (sunne aur bolne ki)</label>
+    <select class="field" id="voiceLangSelect">
+      <option value="hi-IN">हिंदी (Hindi)</option>
+      <option value="en-IN">English (India)</option>
+      <option value="en-US">English (US)</option>
+      <option value="en-GB">English (UK)</option>
+    </select>
+
+    <label class="label" for="voicePick">Awaaz</label>
+    <select class="field" id="voicePick">
+      <option value="">Phone ki default awaaz</option>
+    </select>
+
+    <div class="row row--wrap">
+      <button class="btn btn--small" type="button" id="btnVoiceTest">🔊 Awaaz test karo</button>
+      <button class="btn btn--small" type="button" id="btnVoiceStart">🎙 Voice mode shuru</button>
+    </div>
+    <p class="hint">Voice mode me mic khud khulta hai — aap bologi, jawab sunkar phir se sunna shuru. Rukna ho to mic button ya "🔇 Chup" dabao. Android Chrome par hands-free sabse achha chalta hai; iPhone Safari me har message ke baad mic dobara dabana pad sakta hai (Apple ki limit hai).</p>
+    <p class="hint">Agar aapka provider transcription model deta hai (Groq, OpenAI), to browser speech na hone par recording provider ko bheji jaati hai.</p>
 
     <h3 class="sheet__sub">5. Backup</h3>
     <div class="row row--wrap">
