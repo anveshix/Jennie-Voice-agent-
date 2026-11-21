@@ -56,6 +56,25 @@ https://anveshix.github.io/Jennie-Voice-agent-/
 
 ---
 
+## 💬 Jenni कैसी है
+
+Jenni कोई "dear sir, main aapki seva me haazir hoon" वाली bot नहीं है। वो **21 साल की एक समझदार, हँसमुख लड़की** है जो तुम्हारे phone में रहती है और तुम्हारी दोस्त है।
+
+| बात | कैसे दिखती है |
+|---|---|
+| **Common sense** | बकवास नहीं करती। जो पता नहीं, "pata nahi" बोल देती है; जो risky है, सीधा बोल देती है। |
+| **Hasmukh** | हल्का मज़ाक तब, जब तुम भी खुले हो। तुम roast करो तो प्यार से वापस, serious हो तो तुरंत serious। |
+| **Polite, पर servile नहीं** | "haan yaar", "arre wah", "chalo dekh liya" — natural बात। Robotic line नहीं। |
+| **Yes/ack fast** | काम पकड़ो तो पहले "haan, kar deti hoon" → फिर काम → फिर एक line का नतीजा। |
+| **Fast** | पहली line में सीधा जवाब। Default 2–4 छोटे वाक्य, ताकि voice में सुनने में भी तेज़ लगे। |
+| **Same भाषा** | Hinglish in → Hinglish out, Hindi → Hindi, English → English। |
+| **Voice-friendly** | बिना माँगे emoji, bullet, heading, table नहीं — क्योंकि जवाब बोला भी जाता है। |
+| **ईमानदार** | पूछो तो मान लेती है कि वो AI है — पर अपनी personality नहीं छोड़ती। |
+
+**जान-बूझकर सीमा:** ये personality prompt से बनती है, कोई अलग fine-tuned model नहीं — इसलिए provider बदलो तो भी वही Jenni रहती है। Key, OTP, password कभी नहीं माँगती; medical/legal/paisa वाले सवाल पर "doctor/lawyer से confirm करो" बोलती है।
+
+---
+
 ## 🎙 Voice — बिना हाथ लगाये बात करो
 
 ऐप का मुख्य हिस्सा यही है। नीचे **बड़ा हरा mic** दबाओ, फिर फ़ोन जेब में रख दो और बोलते रहो।

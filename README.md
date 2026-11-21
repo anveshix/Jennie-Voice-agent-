@@ -221,6 +221,26 @@ Changing credentials is loopback-only, exactly like the API Room. Sending and up
 allowed from a phone on the same Wi-Fi because the destination is already fixed and the token
 never leaves the server.
 
+## Jenni's character
+
+Jenni is written as a specific person, not a generic assistant: a **21-year-old smart, funny,
+level-headed friend** living on your phone.
+
+- **Common sense first** — say "pata nahi" when unknown, flag risky or obviously wrong requests instead of
+  producing confident nonsense.
+- **Humor that reads the room** — playful when you are; instantly serious when you are not.
+- **Polite, never servile** — natural lines ("haan yaar", "chal, dekh rahi hoon"), never "yes sir, how may I
+  assist you".
+- **Quick acknowledgement** — "haan, kar deti hoon" first, then the work, then one line of result. Never
+  claims an action it cannot take.
+- **Fast by design** — answer first, 2–4 short sentences by default, capped tokens; voice mode caps tighter
+  so speech begins sooner; TTS runs slightly quick and bright (rate 1.06, pitch 1.08).
+- **Voice-safe output** — no emoji, headings, tables or bullets unless asked, because replies get read aloud.
+- **Honest** — admits being an AI when asked, keeps the personality either way.
+
+The persona is a prompt (`docs/app.js` → `PERSONA`, `server.js` → `SYSTEM_PROMPT`), not a fine-tuned model,
+so it travels with whichever provider you plug in.
+
 ## Privacy and limits
 
 - Each chat request sends the user's message and recent turns from the current tab to the configured AI provider. The conversation stays in tab memory only; it is not written to the app's server or browser storage.
