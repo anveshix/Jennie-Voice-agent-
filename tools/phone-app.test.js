@@ -138,6 +138,21 @@ async function boot(options = {}) {
       }
       return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'Theek hai, **sun rahi** hoon.' } }] }) };
     }
+    if (target.includes('api.github.com/repos/')) {
+      if (target.endsWith('/readme')) {
+        return { ok: true, status: 200, json: async () => ({ content: Buffer.from('# Demo repo\n\nA tiny helper library.').toString('base64'), encoding: 'base64' }) };
+      }
+      if (target.endsWith('/contents/')) {
+        return { ok: true, status: 200, json: async () => ([{ type: 'file', name: 'index.js' }, { type: 'dir', name: 'src' }]) };
+      }
+      return {
+        ok: true, status: 200, json: async () => ({
+          full_name: 'octocat/demo-repo', description: 'A tiny helper library', stargazers_count: 1234,
+          language: 'JavaScript', archived: false, pushed_at: '2026-11-01T10:00:00Z',
+          license: { spdx_id: 'MIT' }, open_issues_count: 7, default_branch: 'main'
+        })
+      };
+    }
     if (target.includes('upload/drive')) return { ok: true, status: 200, json: async () => ({ id: 'f1', name: 'Draft.md' }) };
     if (target.includes('drive/v3/files')) {
       return { ok: true, status: 200, json: async () => ({ files: [{ id: 'a', name: 'Notes.md', modifiedTime: '2026-11-01T10:00:00Z', webViewLink: 'https://drive.google.com/x' }] }) };
@@ -153,6 +168,7 @@ async function boot(options = {}) {
 
   window.eval(fs.readFileSync(path.join(ROOT, 'security.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'docs.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'github.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'));
   await wait(180);
 
@@ -628,6 +644,58 @@ function submit(window, text) {
   submit(b.window, 'kaise ho yaar');
   await wait(700);
   ok(b.window.document.querySelectorAll('.msg__tool--doc').length === 0, 'ordinary chat gets no download button');
+  b.dom.window.close();
+
+  /* ── the model must never say "main file nahi bana sakti" ──────────────── */
+  b = await boot({ script: ['# Subject: Leave application\n\nRespected Sir / Madam,\n\nI request leave on Monday, 23/11/2026 for personal reasons.\n\nYours obediently,\n[Your Name]'] });
+  submit(b.window, 'leave application likho');
+  await wait(900);
+  const promptText = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body).messages[0].content;
+  ok(/app tumhare jawab se apne aap/i.test(promptText), 'the prompt says the app builds the file');
+  ok(/Main file nahi bana sakti/.test(promptText), 'the prompt bans the "I cannot make a file" reply');
+  ok(/clone\/install karne ko mat bolo/i.test(promptText), 'the prompt stops telling a phone user to clone repos');
+  b.dom.window.close();
+
+  /* a formal letter gets a download button even without a trigger word */
+  b = await boot({ script: ['Respected Sir / Madam,\n\nI am a student of class 9 and I request leave on Monday for personal reasons. I will complete all pending work after returning.\n\nThanking you.\n\nYours obediently,\n[Your Name]'] });
+  submit(b.window, 'principal ko chhutti ki baat likh do');
+  await wait(900);
+  ok(Boolean(b.window.document.querySelector('.msg__tool--doc')), 'a formal letter is detected without a trigger word');
+  b.dom.window.close();
+
+  /* the requested format is respected: csv / txt / md / json */
+  for (const [word, ext] of [['csv file banao', 'csv'], ['txt file chahiye', 'txt'], ['markdown md file banao', 'md'], ['json file banao', 'json']]) {
+    b = await boot({ script: ['name,score\nAarav,91\nMeera,88'] });
+    submit(b.window, word);
+    await wait(800);
+    const btn = b.window.document.querySelector('.msg__tool--doc');
+    ok(btn && btn.textContent.includes('.' + ext), `${word} → .${ext} download`, btn && btn.textContent);
+    b.dom.window.close();
+  }
+
+  /* ── public GitHub repos can be read from the phone ───────────────────── */
+  b = await boot({ script: ['Is repo me index.js aur src/ hai, aur README ek tiny helper library batata hai.'] });
+  submit(b.window, 'https://github.com/octocat/demo-repo ka code dekho');
+  // the repo toast lands ~0.3 s after send; the "PIN lock lagao" nudge replaces
+  // it at 1.6 s, so sample the toast before that
+  await wait(900);
+  const repoToast = b.window.document.getElementById('toastHost').textContent;
+  await wait(900);
+  const repoCalls = b.calls.filter((c) => c.url.includes('api.github.com'));
+  ok(repoCalls.some((c) => c.url.includes('/repos/octocat/demo-repo')), 'the repo is fetched from api.github.com', String(repoCalls.length));
+  const repoPrompt = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body).messages.slice(-1)[0].content;
+  ok(repoPrompt.includes('octocat/demo-repo'), 'the prompt carries the repo name');
+  ok(repoPrompt.includes('1234'), 'stars reach the model');
+  ok(repoPrompt.includes('index.js'), 'top-level files reach the model');
+  ok(repoPrompt.includes('tiny helper library'), 'the README reaches the model');
+  ok(repoToast.includes('padh liya'), 'the user is told the repo was read', repoToast.slice(0, 60));
+  b.dom.window.close();
+
+  /* a plain question about GitHub must not hit the API */
+  b = await boot({ script: ['GitHub ek code hosting site hai.'] });
+  submit(b.window, 'github kya hota hai');
+  await wait(700);
+  ok(b.calls.filter((c) => c.url.includes('api.github.com')).length === 0, 'a general question does not fetch a repo');
   b.dom.window.close();
 
   /* ── Jenni's character reaches the model, on every single request ──────── */

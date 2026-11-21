@@ -207,7 +207,21 @@
     ]);
   }
 
-  const DOC_WORDS = /\b(docx?|word file|word me|word mein|ms word|pdf|file banao|file bana do|file chahiye|download karna|document banao|document chahiye|application likho|letter likho)\b/i;
+  const DOC_WORDS = /\b(docx?|word file|word me|word mein|ms word|pdf|txt|text file|markdown|md file|csv|json file|html file|file banao|file bana do|file chahiye|download karna|document banao|document chahiye|application likho|letter likho|resume banao)\b/i;
+
+  /**
+   * Is the reply itself a document? Header + formal body + signature lines is a
+   * letter/application regardless of what the user typed, so the download
+   * button can appear even when no trigger word was used.
+   */
+  function looksLikeDocumentText(text) {
+    const value = String(text || '');
+    if (value.length < 140) return false;
+    const formalHeader = /(respected (sir|madam)|dear (sir|madam)|to\s*\n\s*the principal|subject\s*:)/i.test(value);
+    const closing = /(yours (obediently|sincerely|faithfully)|thanking you|sincerely,|regards,)/i.test(value);
+    const signature = /\[\s*(your )?name\s*\]|\[your full name\]/i.test(value);
+    return (formalHeader && (closing || signature)) || (formalHeader && value.split('\n').length > 8);
+  }
 
   /**
    * Does this message ask for a downloadable document?
@@ -223,15 +237,86 @@
     return true;
   }
 
+  /** Which file does the request ask for? docx unless they named a type. */
+  function docFormatFor(request) {
+    const value = String(request || '').toLowerCase();
+    if (/\bcsv\b/.test(value)) return 'csv';
+    if (/\bjson\b/.test(value)) return 'json';
+    if (/\bhtml\b/.test(value)) return 'html';
+    if (/\b(md|markdown)\b/.test(value)) return 'md';
+    if (/\b(txt|text file|plain text)\b/.test(value)) return 'txt';
+    return 'docx';
+  }
+
+  /** Plain-text files need no packaging at all. */
+  function buildTextFile(title, text, format) {
+    const body = format === 'csv' ? toCsv(text)
+      : format === 'json' ? toJson(title, text)
+        : format === 'html' ? toHtml(title, text)
+          : String(text || '');
+    const types = {
+      txt: 'text/plain;charset=utf-8',
+      md: 'text/markdown;charset=utf-8',
+      csv: 'text/csv;charset=utf-8',
+      json: 'application/json',
+      html: 'text/html;charset=utf-8'
+    };
+    return new Blob([body], { type: types[format] || 'text/plain;charset=utf-8' });
+  }
+
+  function toCsv(text) {
+    return String(text || '')
+      .split('\n')
+      .filter((line) => line.trim() && !/^\s*[#-]/.test(line))
+      .map((line) => line.split(/\s*\|\s*|\t|,(?![^(]*\))/).map((cell) => {
+        const clean = cell.replace(/^\s+|\s+$/g, '').replace(/\*\*/g, '');
+        return /[",\n]/.test(clean) ? '"' + clean.replace(/"/g, '""') + '"' : clean;
+      }).join(','))
+      .join('\n');
+  }
+
+  function toJson(title, text) {
+    return JSON.stringify({ title: title || 'Jenni document', generatedAt: new Date().toISOString(), text: String(text || '') }, null, 2);
+  }
+
+  function toHtml(title, text) {
+    const safe = escapeXml(title || 'Jenni document');
+    const body = String(text || '')
+      .split(/\n{2,}/)
+      .map((block) => {
+        const heading = (block.match(/^#{1,6}\s+(.+)$/m) || [])[1];
+        if (heading) return '<h2>' + escapeXml(heading.replace(/^#+\s*/, '')) + '</h2>';
+        return '<p>' + escapeXml(block).replace(/\n/g, '<br>') + '</p>';
+      })
+      .join('\n');
+    return '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+      + '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+      + '<title>' + safe + '</title>\n'
+      + '<style>body{font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;'
+      + 'max-width:46rem;margin:2rem auto;padding:0 1rem;color:#111}h2{margin-top:1.6em}</style>\n'
+      + '</head>\n<body>\n' + body + '\n</body>\n</html>\n';
+  }
+
   /** A safe, human filename: "Leave application 23 Nov 2026.docx" */
-  function docFileName(title) {
+  function docFileName(title, format) {
+    const ext = format || 'docx';
     const base = String(title || 'Jenni document')
       .replace(/[\\/:*?"<>|]+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 60) || 'Jenni document';
-    return base + '.docx';
+    return base + '.' + ext;
   }
 
-  return { buildDocx, looksLikeDocRequest, docFileName, parseLines, crc32, escapeXml };
+  /** One call the app can use: right blob + right name for this request. */
+  function buildFile(title, text, request) {
+    const format = docFormatFor(request);
+    const blob = format === 'docx' ? buildDocx(title, text) : buildTextFile(title, text, format);
+    return { blob, format, name: docFileName(title, format) };
+  }
+
+  return {
+    buildDocx, buildFile, buildTextFile, docFormatFor, docFileName,
+    looksLikeDocRequest, looksLikeDocumentText, parseLines, crc32, escapeXml
+  };
 });
