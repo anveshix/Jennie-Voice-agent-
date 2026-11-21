@@ -1103,3 +1103,13 @@ code {
   border-color: rgba(252, 211, 77, .35);
 }
 .msg__tool--retry:hover { background: rgba(252, 211, 77, .12); }
+
+/* memory cards: one line of text + a small forget button */
+.card--tight {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+}
+.card--tight .card__meta { font-size: 13px; line-height: 1.4; }

@@ -15,7 +15,9 @@
     drive: 'jenni_drive_v1',   // client id only
     driveToken: 'jenni_drive_tok_v1', // access token + expiry (session-ish)
     lock: 'jenni_lock_v1',     // PIN settings + config
-    vault: 'jenni_vault_v1'    // the encrypted API key
+    vault: 'jenni_vault_v1',   // the encrypted API key
+    memory: 'jenni_memory_v1', // durable facts about the user
+    skills: 'jenni_skills_v1'  // procedures learned from real chats
   };
 
   const PRESETS = {
@@ -39,6 +41,13 @@
   const SEC = window.JENNI_SECURITY || {};
   const DOCS = window.JENNI_DOCS || {};
   const GH = window.JENNI_GITHUB || {};
+  const AGENT = window.JENNI_AGENT || {};
+
+  /* Long-term memory and learned skills. Both are plain localStorage data, so
+     they show up in the UI, survive reloads and vanish on "Erase everything".
+     Declared after AGENT, which they depend on. */
+  const memory = AGENT.createMemory ? AGENT.createMemory(localStorage) : null;
+  const skills = AGENT.createSkills ? AGENT.createSkills(localStorage) : null;
   const $ = (id) => document.getElementById(id);
   const now = () => Date.now();
 
@@ -391,6 +400,7 @@
       'Galat mat bolo. API key, password, OTP, bank details kabhi maango mat, kabhi repeat mat karo. Medical/legal/paisa wale serious sawaal par salah do par "doctor/lawyer se confirm karo" bolna zaroori hai. Emergency (khud ko nuksan, koi khatre me) me pehle safety, phir baat.',
       // honesty about being an AI
       'Jab seedha poochha jaye to maan lo ki tum AI ho (internet par chalne wali), par apni personality mat chhodo — insaan hone ka jhooth mat bolo.',
+      'Aaj 2026 ke aakhir me ho aur aage 2027-2030 ki soch ke jawab do: career, padhai, AI, technology, paisa — har cheez me ye socho ki agle 3-5 saal me kya badlega, kaunsi skill aaj se bachayegi, aur kya aaj ka trend 2030 tak purana ho jayega. Purani ya outdated baat ko confidently "aaj ka sach" mat batao — jo cheez 2024 tak sach thi par ab badal chuki hai, wo bolo ki badal chuki hai.',
       // the user calls her "yes sir" style — mirror respect without grovelling
       'DOC FILE RULE: jab user doc/word/pdf/letter/application maange to seedha poora draft likho — placeholders [] me, beech me sawaal nahi. Kabhi mat bolo ki tum file nahi bana sakti ya download nahi kar sakti: phone app tumhare jawab se apne aap .docx/.txt/.md/.csv file bana kar Download button deta hai. "Main file nahi bana sakti, tum copy karo" jaisa jumla bilkul nahi — bas draft do, file app bana degi.',
       'User ke paas git/terminal nahi hai, isliye unhe clone/install karne ko mat bolo. GitHub ka public code padhna ho to tum khud jenniFetchRepo(tool) se padh sakti ho — jawab me links aur seedha code sample do.',
@@ -408,12 +418,33 @@
 
   const SYSTEM_PROMPT = personaPrompt();
 
+  /** The facts and the playbook that matter for *this* message. */
+  function agentContextFor(userText) {
+    const parts = [];
+    if (memory) {
+      const facts = memory.recall(userText, 6);
+      if (facts.length) {
+        parts.push('User ke baare me yaad hai (sirf zaroorat par use karo, list mat do):\n'
+          + facts.map((fact) => '- ' + fact.text).join('\n'));
+      }
+    }
+    if (skills) {
+      const matched = skills.match(userText);
+      if (matched.length) {
+        parts.push('Playbook jo pehle kaam aaya (follow karo, par jawab me steps ki list mat banao):\n'
+          + matched.map((skill) => skill.name + ': ' + skill.steps.join(' → ')).join('\n'));
+      }
+    }
+    return parts.length ? '\n\n' + parts.join('\n\n') : '';
+  }
+
   function conversationForApi(userText) {
     // Recent turns only: older messages make the first token slower and rarely help.
     const history = state.chat.slice(-8)
       .filter((m) => m.text && !m.pending && !String(m.text).startsWith('Maaf karo'))
       .map((m) => ({ role: m.role === 'me' ? 'user' : 'assistant', content: m.text }));
-    return [{ role: 'system', content: personaPrompt() }, ...history, { role: 'user', content: userText }];
+    const system = personaPrompt() + agentContextFor(userText);
+    return [{ role: 'system', content: system }, ...history, { role: 'user', content: userText }];
   }
 
   /* ══════════════════════════════════════════════════════════════ CHAT UI */
@@ -615,10 +646,39 @@
     try {
       // Voice: keep the reply short so speech starts fast. Typed: allow more.
       const repoContext = await repoContextFor(clean);
+
+      // Learn durable facts before asking — "mera naam Aarav hai" must survive
+      // the next reload, not just this conversation.
+      if (memory) {
+        const learned = memory.observe(clean, 'chat');
+        if (learned.length) memory.compact();
+      }
+
       reply = await askProvider(
         conversationForApi(clean + repoContext),
         { maxTokens: voice.mode ? 260 : 600 }
       );
+
+      // One self-check pass: a plan-shaped question deserves more than "haan".
+      if (AGENT.critiqueAnswer && !voice.mode) {
+        const verdict = AGENT.critiqueAnswer(reply, clean);
+        if (!verdict.ok) {
+          setStatus('busy');
+          const better = await askProvider(
+            conversationForApi(clean + repoContext
+              + '\n\n[Tumhara pichla draft is wajah se adhura tha: ' + verdict.reason
+              + '. Ab poora, seedha aur kaam ka jawab do.]'),
+            { maxTokens: 700 }
+          );
+          if (better && better.length > reply.length * 0.6) reply = better;
+        }
+      }
+      /* A useful step-by-step answer becomes a reusable playbook, so the next
+         similar question starts from experience instead of zero (Hermes-style). */
+      if (skills && AGENT.skillFrom && reply) {
+        const learned = AGENT.skillFrom(clean, reply);
+        if (learned) skills.learn(learned);
+      }
       pending.pending = false;
       pending.text = reply;
       setStatus('ok', providerName() + ' · ' + state.cfg.model);
@@ -1430,6 +1490,7 @@
     if ($('transcribe')) $('transcribe').value = cfg.transcribe || PRESETS.groq.transcribe;
     paintProvGrid(cfg.provider || 'groq');
     paintSetupStatus();
+    paintMemory();
   }
 
   function paintModelLinks(provider) {
@@ -1754,6 +1815,68 @@
 
   function noteActivity() {
     if (security.lock) security.lock.touching();
+  }
+
+  /** What Jenni remembers, and the procedures she has learned. */
+  function paintMemory() {
+    if (!memory || !skills) return;
+    const facts = memory.all();
+    const learned = skills.custom();
+    const statusText = $('memoryStatusText');
+    const badge = $('memoryStatus');
+    if (statusText) {
+      statusText.textContent = facts.length
+        ? `${facts.length} baat yaad hai`
+        : 'Kuch yaad nahi';
+    }
+    if (badge) badge.className = 'status' + (facts.length ? ' is-ok' : '');
+
+    const list = $('memoryList');
+    if (list) {
+      list.innerHTML = '';
+      if (!facts.length) {
+        list.innerHTML = '<p class="field-hint">Abhi khali hai. "mera naam … hai" bolo, phir dekho.</p>';
+      }
+      facts.slice(0, 40).forEach((fact) => {
+        const card = document.createElement('div');
+        card.className = 'card card--tight';
+        const text = document.createElement('span');
+        text.className = 'card__meta';
+        text.textContent = fact.text;
+        const forget = document.createElement('button');
+        forget.type = 'button';
+        forget.className = 'btn btn--small btn--ghost';
+        forget.textContent = 'Bhool jao';
+        forget.addEventListener('click', () => {
+          memory.forget(fact.id);
+          paintMemory();
+        });
+        card.append(text, forget);
+        list.appendChild(card);
+      });
+    }
+
+    const summary = $('skillsSummary');
+    if (summary) {
+      summary.textContent = learned.length
+        ? `${skills.builtIn().length} built-in sikhai + ${learned.length} tumse seekhi`
+        : `${skills.builtIn().length} built-in playbooks tayaar — baat karte karte naye seekhegi`;
+    }
+    const skillList = $('skillList');
+    if (skillList) {
+      skillList.innerHTML = '';
+      learned.forEach((skill) => {
+        const card = document.createElement('div');
+        card.className = 'card card--tight';
+        const name = document.createElement('strong');
+        name.textContent = `${skill.name} · v${skill.version || 1}`;
+        const steps = document.createElement('span');
+        steps.className = 'card__meta';
+        steps.textContent = skill.steps.join(' → ');
+        card.append(name, steps);
+        skillList.appendChild(card);
+      });
+    }
   }
 
   async function submitUnlock() {
@@ -2338,6 +2461,19 @@
       }
     });
 
+    $('btnMemoryRefresh').addEventListener('click', () => {
+      paintMemory();
+      toast('Memory refresh ho gayi', false);
+    });
+    $('btnMemoryClear').addEventListener('click', () => {
+      const sure = window.confirm('Jenni jo yaad rakhti hai — sab bhool jayegi. Pakka?');
+      if (!sure) return;
+      memory.clear();
+      skills.clear();
+      paintMemory();
+      toast('Sab bhool gayi', false);
+    });
+
     $('btnPanic').addEventListener('click', () => {
       const sure = window.confirm('Sab kuch mit jayega — key, PIN, drafts, chat. Pakka?');
       if (sure) panicWipe();
@@ -2423,6 +2559,7 @@
     wireApp();
     wireBot();
     paintSecurity();
+    paintMemory();
 
     /* Three honest states on boot:
          vault + PIN  → locked until the PIN is typed
