@@ -187,7 +187,7 @@
   const CSP = [
     "default-src 'self'",
     "script-src 'self' https://accounts.google.com",
-    "connect-src 'self' https:",
+    "connect-src 'self' https:",   // includes api.github.com and every provider
     "img-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self'",

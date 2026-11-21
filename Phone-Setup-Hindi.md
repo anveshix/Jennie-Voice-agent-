@@ -79,6 +79,22 @@ Jenni से बस कहो: *"monday 23/11/2026 ki leave application doc file
 - File **तुम्हारे phone में** बनती है, कहीं upload नहीं होती।
 - Download नहीं दबाया तो भी draft chat और Drafts में सुरक्षित रहता है।
 
+**किस format में?** जो माँगो वही — `docx` (default), `txt`, `md`, `csv`, `json`, `html`। सिर्फ़ "leave application likho" कहो तो भी अगर जवाब पूरा formal letter है, Download button अपने आप आ जाता है — किसी ख़ास शब्द की ज़रूरत नहीं।
+
+**अगर Jenni बोले "मैं file नहीं बना सकती"?** अब नहीं बोलेगी — prompt में साफ़ लिखा है कि file **app** बनाती है। फिर भी बोले तो page reload करो (नया code आ जाएगा)।
+
+### 🐙 GitHub repo पढ़ना (clone नहीं, पढ़ना)
+
+Phone पर git clone / npm install नहीं हो सकता — ये सच है। पर Jenni **public repo पढ़ सकती है**:
+
+> "`https://github.com/anveshix/Jennie-Voice-agent-` का code देखो"
+
+वो GitHub API से repo की जानकारी (stars, license, आख़िरी update), top-level files और README पढ़ कर उसी के हिसाब से जवाब देती है — links और code sample के साथ, "clone करो" बोले बिना।
+
+- सिर्फ़ **public** repos, बिना login। GitHub की free limit ~60 requests/hour है।
+- हर repo पर 3 request जाती हैं (info + README + files), इसलिए घंटे में ~20 repo आराम से।
+- कुछ भी install या run नहीं होता — सिर्फ़ पढ़ना।
+
 **जान-बूझकर सीमा:** ये personality prompt से बनती है, कोई अलग fine-tuned model नहीं — इसलिए provider बदलो तो भी वही Jenni रहती है। Key, OTP, password कभी नहीं माँगती; medical/legal/paisa वाले सवाल पर "doctor/lawyer से confirm करो" बोलती है।
 
 ---

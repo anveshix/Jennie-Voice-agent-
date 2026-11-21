@@ -243,6 +243,15 @@ so it travels with whichever provider you plug in.
 
 ## Documents and failure handling
 
+- **Documents are always offered.** Any reply that reads like a letter/application (formal header + closing or
+  signature block) gets the download button even if the user never said "doc" — `docs/docs.js` also writes
+  `.txt`, `.md`, `.csv`, `.json` and `.html` when those are asked for.
+- **The model is told not to refuse.** The prompt states that the app builds the file from the reply, so it
+  writes the draft instead of saying "I cannot create or download files".
+- **Public GitHub repos can be read** (`docs/github.js`): `owner/repo` or a github.com URL plus a request to
+  look at the code fetches metadata, top-level tree and README through api.github.com and folds a trimmed
+  digest into the prompt. A browser cannot clone or install — it reads, links and quotes instead, and the
+  prompt forbids telling a phone user to run git.
 - **Document requests make real files.** "leave application doc file banao", "word me do", "PDF chahiye",
   "letter likho" → the model writes the full draft and the app attaches **⬇ Download .docx** to that reply.
   The file is a genuine OOXML package built in the browser (`docs/docs.js`, an 80-line stored-zip writer +

@@ -38,6 +38,7 @@
 
   const SEC = window.JENNI_SECURITY || {};
   const DOCS = window.JENNI_DOCS || {};
+  const GH = window.JENNI_GITHUB || {};
   const $ = (id) => document.getElementById(id);
   const now = () => Date.now();
 
@@ -391,7 +392,8 @@
       // honesty about being an AI
       'Jab seedha poochha jaye to maan lo ki tum AI ho (internet par chalne wali), par apni personality mat chhodo — insaan hone ka jhooth mat bolo.',
       // the user calls her "yes sir" style — mirror respect without grovelling
-      'Agar user "doc file / word / PDF / application / letter banao" bole, to seedha poori ready-to-use application/letter likho — poora draft ek hi jawab me, placeholders [] me, aur beech me "batao kis class me ho" jaisa sawaal mat poochho. File app khud bana degi.',
+      'DOC FILE RULE: jab user doc/word/pdf/letter/application maange to seedha poora draft likho — placeholders [] me, beech me sawaal nahi. Kabhi mat bolo ki tum file nahi bana sakti ya download nahi kar sakti: phone app tumhare jawab se apne aap .docx/.txt/.md/.csv file bana kar Download button deta hai. "Main file nahi bana sakti, tum copy karo" jaisa jumla bilkul nahi — bas draft do, file app bana degi.',
+      'User ke paas git/terminal nahi hai, isliye unhe clone/install karne ko mat bolo. GitHub ka public code padhna ho to tum khud jenniFetchRepo(tool) se padh sakti ho — jawab me links aur seedha code sample do.',
       'Kaam pakadne par turant haan bolo — "haan yaar, kar deti hoon", "chal, dekh rahi hoon", "ok done" — jab tak koi cheez sach me mumkin na ho. Pehle "haan" (short ack), phir kaam, phir ek line ka natija. Jhoothi confirmation mat do: jo tum nahi kar sakti (message bhejna, paisa bhejna, file save karna) usme "ye main nahi kar sakti, par tumhare liye ye kar sakti hoon…" bolo.'
     ]
   };
@@ -478,14 +480,18 @@
         const download = document.createElement('button');
         download.type = 'button';
         download.className = 'msg__tool msg__tool--doc';
-        download.textContent = '⬇ Download .docx';
+        const ext = message.doc.format || 'docx';
+        download.textContent = `⬇ Download .${ext}`;
         download.addEventListener('click', () => {
           try {
-            const blob = DOCS.buildDocx(message.doc.title, message.doc.text);
+            const built = DOCS.buildFile
+              ? DOCS.buildFile(message.doc.title, message.doc.text, '.' + ext)
+              : { blob: DOCS.buildDocx(message.doc.title, message.doc.text), name: DOCS.docFileName(message.doc.title) };
+            const blob = built.blob;
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = DOCS.docFileName(message.doc.title);
+            link.download = built.name;
             document.body.appendChild(link);
             link.click();
             link.remove();
@@ -566,6 +572,25 @@
     }
   }
 
+  /**
+   * "anveshix/Jenni-Voice-agent- ka code dekho" → read the public repo and hand
+   * the model a compact digest. A phone cannot clone or install; this is the
+   * part that is actually possible in a browser, done honestly.
+   */
+  async function repoContextFor(text) {
+    if (!GH.readRepo || !GH.looksLikeRepoRequest || !GH.looksLikeRepoRequest(text)) return '';
+    const parsed = GH.parseRepo(text);
+    if (!parsed) return '';
+    setStatus('busy');
+    try {
+      const info = await GH.readRepo(`${parsed.owner}/${parsed.repo}`);
+      toast(`GitHub: ${info.fullName} padh liya (${info.stars} stars)`, false);
+      return `\n\n[GitHub se padha gaya repo — isi ke hisaab se jawab do, aur user ko clone/install karne ko mat bolo]\n${info.apiBlock}`;
+    } catch (error) {
+      return `\n\n[GitHub repo padha nahi ja saka: ${error.message}]`;
+    }
+  }
+
   async function send(text, options = {}) {
     const clean = String(text || '').trim();
     if (!clean || state.busy) return;
@@ -589,7 +614,11 @@
     let reply = '';
     try {
       // Voice: keep the reply short so speech starts fast. Typed: allow more.
-      reply = await askProvider(conversationForApi(clean), { maxTokens: voice.mode ? 260 : 600 });
+      const repoContext = await repoContextFor(clean);
+      reply = await askProvider(
+        conversationForApi(clean + repoContext),
+        { maxTokens: voice.mode ? 260 : 600 }
+      );
       pending.pending = false;
       pending.text = reply;
       setStatus('ok', providerName() + ' · ' + state.cfg.model);
@@ -607,14 +636,21 @@
       paintChat();
     }
 
-    // A document request gets a real file, not just prose in a bubble.
-    if (reply && DOCS.buildDocx && DOCS.looksLikeDocRequest(clean)) {
-      const last = state.chat[state.chat.length - 1];
-      if (last && last.role === 'jenni') {
-        last.doc = { title: docTitleFor(clean, reply), text: reply };
-        writeJson(LS.chat, state.chat.filter((m) => !m.pending));
-        paintChat();
-        toast('File ready — neeche Download dabao', false);
+    // A reply that IS a document gets a real file — whether or not the user
+    // used a trigger word. Asking for it by name picks the format instead.
+    if (reply && DOCS.buildFile) {
+      const asked = DOCS.looksLikeDocRequest(clean);
+      const isDoc = DOCS.looksLikeDocumentText(reply);
+      if (asked || isDoc) {
+        const last = state.chat[state.chat.length - 1];
+        if (last && last.role === 'jenni') {
+          const title = docTitleFor(clean, reply);
+          const built = DOCS.buildFile(title, reply, asked ? clean : '');
+          last.doc = { title, text: reply, format: built.format, name: built.name };
+          writeJson(LS.chat, state.chat.filter((m) => !m.pending));
+          paintChat();
+          toast(`File ready (.${built.format}) — neeche Download dabao`, false);
+        }
       }
     }
 
