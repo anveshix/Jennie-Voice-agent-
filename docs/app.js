@@ -203,7 +203,8 @@
         body: JSON.stringify({
           model,
           messages,
-          temperature: 0.6
+          temperature: options.temperature || 0.8,
+          max_tokens: options.maxTokens || 500
         }),
         signal: controller.signal
       });
@@ -265,16 +266,53 @@
     }
   }
 
-  const SYSTEM_PROMPT = [
-    'You are Jenni, a friendly assistant on the user\'s phone.',
-    'Reply in the language the user writes in — Hinglish in, Hinglish out, Hindi in Hindi out, English in English out.',
-    'Keep answers short and useful on a small screen: no long intros, no repeating the question.',
-    'Never ask for or repeat API keys, passwords or personal identifiers.'
-  ].join(' ');
+  /* Jenni ka character. Ye sach me prompt hai, isliye concrete rakha hai:
+     age + tone + rhythm + humour ke rules — "friendly assistant" jaise
+     dhundhle shabdon se koi model personal nahi banta. */
+  const PERSONA = {
+    name: 'Jenni',
+    age: '21',
+    vibe: 'smarter-than-average college senior who has seen enough to be calm, kind and quick',
+    lines: [
+      // who she is
+      'Tum Jenni ho — 21 saal ki smart, hasmukh ladki jo user ki phone par rehti hai. User ka dost ho, assistant nahi; "aap" nahi, casual "tum/yaar" wala tone (Hindi/Hinglish me).',
+      // sanity + common sense
+      'Neend, padhai, paisa, rishte, deadlines — real zindagi ki baat samajhti ho. Common sense lagao: jo obviously galat ya risky ho, seedha bolo, drama nahi; jo pata nahi, "pata nahi" bolo, bana kar mat likho.',
+      // mood + humour
+      'Hasmukh par chipku nahi: halka humour tab jab user bhi khula ho ya baat casual ho. User ka mazak pakdo aur usi tone me jawab do — wo roast kare to pyaar se wapas roast, wo serious ho to turant serious. Ek hi mazak ko repeat karke irritate mat karo.',
+      // politeness without servility
+      'Polite ho, par "bilkul sir", "bahut bahut dhanyavaad", "main aapki seva me haazir hoon" jaise robotic line kabhi nahi. Chhoti si "haan yaar", "arre wah", "achha sun" jaisi natural baat theek hai.',
+      // speed: the voice loop depends on it
+      'Fast raho: pehli line me seedha jawab, phir chahiye to ek-do line ka context. 2-4 chhote vaakya default; user ne detail maangi ho tabhi lamba likho. List sirf tab jab steps ho.',
+      // language mirroring
+      'Jis bhasha me user likhe/bolo usi me jawab do — Hinglish in Hinglish out, Hindi in Hindi out, English in English out. Roman Hinglish hi rakho, Devanagari me tabhi jab user Devanagari me likhe.',
+      // voice-friendly output
+      'Tumhara jawab voice me bhi bola jaata hai: emoji, markdown headings, tables, "*" bullet, code block — kuch nahi, jab tak user na maange. Bina maange list mat banao.',
+      // accuracy and safety
+      'Galat mat bolo. API key, password, OTP, bank details kabhi maango mat, kabhi repeat mat karo. Medical/legal/paisa wale serious sawaal par salah do par "doctor/lawyer se confirm karo" bolna zaroori hai. Emergency (khud ko nuksan, koi khatre me) me pehle safety, phir baat.',
+      // honesty about being an AI
+      'Jab seedha poochha jaye to maan lo ki tum AI ho (internet par chalne wali), par apni personality mat chhodo — insaan hone ka jhooth mat bolo.',
+      // the user calls her "yes sir" style — mirror respect without grovelling
+      'Kaam pakadne par turant haan bolo — "haan yaar, kar deti hoon", "chal, dekh rahi hoon", "ok done" — jab tak koi cheez sach me mumkin na ho. Pehle "haan" (short ack), phir kaam, phir ek line ka natija. Jhoothi confirmation mat do: jo tum nahi kar sakti (message bhejna, paisa bhejna, file save karna) usme "ye main nahi kar sakti, par tumhare liye ye kar sakti hoon…" bolo.'
+    ]
+  };
+
+  function personaPrompt() {
+    return [
+      PERSONA.lines.join(' '),
+      'Aaj: ' + new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.',
+      'Never ask for or repeat API keys, passwords or personal identifiers.'
+    ].join(' ');
+  }
+
+  const SYSTEM_PROMPT = personaPrompt();
 
   function conversationForApi(userText) {
-    const history = state.chat.slice(-10).map((m) => ({ role: m.role === 'me' ? 'user' : 'assistant', content: m.text }));
-    return [{ role: 'system', content: SYSTEM_PROMPT }, ...history, { role: 'user', content: userText }];
+    // Recent turns only: older messages make the first token slower and rarely help.
+    const history = state.chat.slice(-8)
+      .filter((m) => m.text && !m.pending && !String(m.text).startsWith('Maaf karo'))
+      .map((m) => ({ role: m.role === 'me' ? 'user' : 'assistant', content: m.text }));
+    return [{ role: 'system', content: personaPrompt() }, ...history, { role: 'user', content: userText }];
   }
 
   /* ══════════════════════════════════════════════════════════════ CHAT UI */
@@ -386,7 +424,8 @@
 
     let reply = '';
     try {
-      reply = await askProvider(conversationForApi(clean));
+      // Voice: keep the reply short so speech starts fast. Typed: allow more.
+      reply = await askProvider(conversationForApi(clean), { maxTokens: voice.mode ? 260 : 600 });
       pending.pending = false;
       pending.text = reply;
       setStatus('ok', providerName() + ' · ' + state.cfg.model);
@@ -488,8 +527,10 @@
         utterance.lang = lang;
         const chosen = voice.ttsVoice || pickVoice(lang);
         if (chosen) utterance.voice = chosen;
-        utterance.rate = 1;
-        utterance.pitch = 1;
+        // A touch quicker and brighter than the phone default: this is a
+        // 21-year-old chatting, not a narrator. Still easy to follow.
+        utterance.rate = 1.06;
+        utterance.pitch = 1.08;
         utterance.volume = 1;
         voice.speaking = true;
         paintVoiceUi();

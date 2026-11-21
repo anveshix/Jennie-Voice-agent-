@@ -522,6 +522,52 @@ function submit(window, text) {
   ok(text.toLowerCase().includes('band ho gaya'), 'the message points at retirement');
   b.dom.window.close();
 
+  /* ── Jenni's character reaches the model, on every single request ──────── */
+  b = await boot({});
+  submit(b.window, 'yaar bore ho rahi hoon');
+  await wait(700);
+  const personaCall = b.calls.filter((c) => c.url.includes('chat/completions')).pop();
+  const personaBody = JSON.parse(personaCall.options.body);
+  const sys = personaBody.messages[0];
+  ok(sys.role === 'system', 'the first message is a system prompt');
+  const persona = sys.content;
+  ok(/21/.test(persona), 'the prompt gives her age (21)', persona.slice(0, 60));
+  ok(/hasmukh|humour|mazak/i.test(persona), 'the prompt asks for a sense of humour');
+  ok(/common sense|pata nahi/i.test(persona), 'the prompt asks for common sense and honest unknowns');
+  ok(/tum|yaar/i.test(persona), 'the prompt sets a casual tone, not "sir ji"');
+  ok(/emoji/i.test(persona) && /bullet/i.test(persona), 'the prompt bans emoji and bullets for voice replies');
+  ok(!/helpful conversational ai assistant|helpful assistant\./i.test(persona), 'the old generic assistant line is gone');
+  ok(/haan|chal|done/i.test(persona), 'quick acknowledgements like "haan / chal / done" are requested');
+  ok(/never ask for or repeat api keys/i.test(persona), 'the key-safety line survives the new persona');
+
+  /* the sampling params support that personality and keep replies short */
+  ok(personaBody.temperature >= 0.7, 'temperature is warm enough for personality', String(personaBody.temperature));
+  ok(Number(personaBody.max_tokens) > 0 && Number(personaBody.max_tokens) <= 600, 'replies are length-capped', String(personaBody.max_tokens));
+
+  /* a stale error bubble must not be fed back as "assistant" context */
+  b.window.localStorage.setItem('jenni_chat_v1', JSON.stringify([
+    { role: 'me', text: 'hello', at: new Date().toISOString() },
+    { role: 'jenni', text: 'Maaf karo, jawab nahi mila. Key galat hai', at: new Date().toISOString() }
+  ]));
+  submit(b.window, 'phir se try karo');
+  await wait(700);
+  const replayBody = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body);
+  const asAssistant = replayBody.messages.filter((m) => m.role === 'assistant').map((m) => m.content);
+  ok(!asAssistant.some((t) => t.startsWith('Maaf karo')), 'error bubbles are not replayed to the model', asAssistant.join(' | '));
+  b.dom.window.close();
+
+  /* voice mode caps the reply tighter than typed chat, so speech starts sooner */
+  b = await boot({});
+  b.$('btnVoice').click();
+  await wait(120);
+  b.rec.last.say('kya haal hai');
+  await wait(800);
+  const voiceBody = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body);
+  ok(Number(voiceBody.max_tokens) <= 300, 'voice replies are capped for speed', String(voiceBody.max_tokens));
+  b.$('btnVoice').click();
+  await wait(150);
+  b.dom.window.close();
+
   /* ── failures stay readable ────────────────────────────────────────────── */
   b = await boot({ fail: true });
   submit(b.window, 'hello');
