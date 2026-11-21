@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5">
+<title>Jenni — phone app</title>
+<meta name="description" content="Jenni runs entirely in your phone browser. Your API key stays on this device. No server, no Node.js, no install.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#05070c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jenni">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icon.svg">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./app.css">
+</head>
+<body>
+
+<div class="aurora" aria-hidden="true"><span></span><span></span><span></span></div>
+
+<!-- ══════════════════════════════════════════════════════════ ONBOARDING -->
+<section class="gate" id="gate" aria-labelledby="gateTitle">
+  <div class="gate__card">
+    <div class="orb" aria-hidden="true"><i></i><i></i><i></i></div>
+    <h1 class="gate__title" id="gateTitle">Jenni</h1>
+    <p class="gate__sub">Aapke phone me hi chalta hai. Koi server nahi, koi install nahi.</p>
+
+    <div class="gate__body" id="gateBody">
+      <label class="label" for="setupKey">API key</label>
+      <div class="input-group">
+        <input class="field" id="setupKey" type="password" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="gsk_… / sk-… / AIza…">
+        <button class="icon-btn" type="button" id="btnSetupReveal" aria-label="Show or hide the key">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.6"/></svg>
+        </button>
+      </div>
+
+      <div class="picker" role="group" aria-label="Choose your AI provider">
+        <button class="prov" type="button" data-provider="groq">
+          <strong>Groq</strong><span>free, fast</span>
+        </button>
+        <button class="prov" type="button" data-provider="gemini">
+          <strong>Gemini</strong><span>free tier</span>
+        </button>
+        <button class="prov" type="button" data-provider="openai">
+          <strong>OpenAI</strong><span>paid</span>
+        </button>
+        <button class="prov" type="button" data-provider="openrouter">
+          <strong>OpenRouter</strong><span>many models</span>
+        </button>
+      </div>
+
+      <details class="more" id="setupMore">
+        <summary>Model / Base URL badalna hai? (optional)</summary>
+        <div class="more__body">
+          <label class="label" for="setupBase">Base URL</label>
+          <input class="field mono" id="setupBase" spellcheck="false" autocapitalize="off" placeholder="https://…/v1">
+          <label class="label" for="setupModel">Model</label>
+          <input class="field mono" id="setupModel" spellcheck="false" autocapitalize="off" placeholder="model ka naam">
+          <label class="label" for="setupTranscribe">Voice-to-text model (khali chhodo to browser speech)</label>
+          <input class="field mono" id="setupTranscribe" spellcheck="false" autocapitalize="off" placeholder="whisper-1">
+        </div>
+      </details>
+
+      <p class="note note--safe">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v6c0 4.2 2.9 7.6 7 9 4.1-1.4 7-4.8 7-9V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+        <span>Key <strong>sirf aapke phone</strong> ki storage me rehti hai. Kisi Jenni server par nahi jaati — request seedha AI provider ko jaati hai.</span>
+      </p>
+
+      <button class="btn btn--primary btn--block" type="button" id="btnSaveKey">Save &amp; start</button>
+      <p class="hint-center" id="gateHint">Key kahan se laayein? <a id="gateKeyLink" href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer">Groq par free key banayein</a></p>
+      <p class="hint-center"><a href="#setup" id="gateSkip">Pehle setup guide dekhein</a></p>
+    </div>
+
+    <p class="room-result" id="gateResult" role="status" aria-live="polite"></p>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ APP -->
+<div class="app" id="app" hidden>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand__dot" id="brandDot" aria-hidden="true"></span>
+      <span>
+        <strong>Jenni</strong>
+        <span class="brand__meta" id="brandMeta">not set up</span>
+      </span>
+    </div>
+    <div class="topbar__actions">
+      <button class="icon-btn" type="button" id="btnOpenSetup" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 14.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1A2 2 0 1 1 4.3 16.5l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1A2 2 0 1 1 7.1 3.7l.1.1a1.7 1.7 0 0 0 2.9-1.2V2.4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.5.9Z"/></svg></button>
+    </div>
+  </header>
+
+  <main class="chat" id="chatScroll">
+    <div class="chat__inner" id="messages" aria-live="polite" aria-relevant="additions"></div>
+    <div class="chat__empty" id="chatEmpty">
+      <div class="orb orb--sm" aria-hidden="true"><i></i><i></i><i></i></div>
+      <p class="chat__emptyTitle">Kuch bhi poochho</p>
+      <p class="chat__emptySub">Hindi ya English me likho, ya neeche mic dabao.</p>
+      <div class="suggestions" id="suggestions">
+        <button class="chip-btn" type="button">Aaj ka din plan karo</button>
+        <button class="chip-btn" type="button">Ek chhoti si email likho</button>
+        <button class="chip-btn" type="button">Hindi me 3 tips do</button>
+      </div>
+    </div>
+  </main>
+
+  <form class="composer" id="composer">
+    <div class="composer__box">
+      <textarea class="composer__input" id="input" rows="1" placeholder="Message likho…" enterkeyhint="send" autocomplete="off"></textarea>
+      <div class="composer__btns">
+        <button class="mic" type="button" id="btnMic" aria-label="Speak">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
+        </button>
+        <button class="send" type="submit" id="btnSend" aria-label="Send">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-7 16-2.5-6L4 12Z"/></svg>
+        </button>
+      </div>
+    </div>
+    <p class="composer__foot" id="composerFoot">Ready</p>
+  </form>
+
+  <nav class="tabs" aria-label="Sections">
+    <button class="tab is-on" type="button" data-tab="chat">Chat</button>
+    <button class="tab" type="button" data-tab="drafts">Drafts</button>
+    <button class="tab" type="button" data-tab="drive">Drive</button>
+    <button class="tab" type="button" data-tab="setup">Setup</button>
+  </nav>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ SHEETS -->
+<div class="scrim" id="scrim" hidden></div>
+
+<section class="sheet" id="sheet-drafts" aria-labelledby="draftsTitle" hidden>
+  <header class="sheet__head">
+    <h2 id="draftsTitle">Drafts</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+  </header>
+  <div class="sheet__body">
+    <p class="hint">Jenni ke jawab yahan save hote hain — is phone me. Kisi jawab par <strong>Save</strong> dabao.</p>
+    <div class="stack" id="draftList"></div>
+  </div>
+</section>
+
+<section class="sheet" id="sheet-drive" aria-labelledby="driveTitle" hidden>
+  <header class="sheet__head">
+    <h2 id="driveTitle">Google Drive</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+  </header>
+  <div class="sheet__body">
+    <div class="status" id="driveStatus"><span class="status__dot"></span><span id="driveStatusText">Not set up</span></div>
+
+    <ol class="steps">
+      <li>Google Cloud → new project → <strong>Google Drive API</strong> enable.</li>
+      <li>OAuth consent screen → External → apna email <em>test user</em> me.</li>
+      <li>Credentials → <strong>OAuth client ID</strong> → Web application.</li>
+      <li>Authorized JavaScript origin: <code id="originHint">https://…</code></li>
+      <li>Client ID yahan paste karo, phir <strong>Connect Google</strong>.</li>
+    </ol>
+
+    <label class="label" for="clientId">OAuth client ID</label>
+    <input class="field mono" id="clientId" spellcheck="false" autocapitalize="off" placeholder="…apps.googleusercontent.com">
+    <div class="row row--wrap">
+      <button class="btn btn--primary" type="button" id="btnDriveSave">Save client ID</button>
+      <button class="btn" type="button" id="btnDriveConnect">Connect Google</button>
+      <button class="btn btn--ghost" type="button" id="btnDriveOff">Disconnect</button>
+    </div>
+    <p class="room-result" id="driveResult" role="status" aria-live="polite"></p>
+    <p class="hint">Scope <code>drive.file</code> — app sirf wahi files dekhti hai jo woh khud banaye. Poora Drive search nahi hota, isliye Google verification ki zaroorat nahi padti.</p>
+
+    <h3 class="sheet__sub">Uploaded files</h3>
+    <div class="stack" id="driveFiles"></div>
+  </div>
+</section>
+
+<section class="sheet" id="sheet-setup" aria-labelledby="setupTitle" hidden>
+  <header class="sheet__head">
+    <h2 id="setupTitle">Setup</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+  </header>
+  <div class="sheet__body">
+    <div class="status" id="setupStatus"><span class="status__dot"></span><span id="setupStatusText">No key</span></div>
+
+    <h3 class="sheet__sub">1. AI provider</h3>
+    <div class="picker picker--grid" role="group" aria-label="Provider presets" id="provGrid"></div>
+    <label class="label" for="apiKey">API key</label>
+    <div class="input-group">
+      <input class="field" id="apiKey" type="password" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="paste key">
+      <button class="icon-btn" type="button" id="btnRevealKey" aria-label="Show or hide the key"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.6"/></svg></button>
+    </div>
+    <label class="label" for="baseUrl">Base URL</label>
+    <input class="field mono" id="baseUrl" spellcheck="false" autocapitalize="off">
+    <label class="label" for="model">Model</label>
+    <input class="field mono" id="model" spellcheck="false" autocapitalize="off">
+    <label class="label" for="transcribe">Voice-to-text model (optional)</label>
+    <input class="field mono" id="transcribe" spellcheck="false" autocapitalize="off">
+    <div class="row row--wrap">
+      <button class="btn btn--primary" type="button" id="btnSave">Save</button>
+      <button class="btn" type="button" id="btnTest">Test connection</button>
+      <button class="btn btn--ghost" type="button" id="btnForget">Delete key</button>
+    </div>
+    <p class="room-result" id="setupResult" role="status" aria-live="polite"></p>
+
+    <h3 class="sheet__sub">2. Phone par install kaise karein</h3>
+    <ol class="steps">
+      <li><strong>Android Chrome:</strong> upar right ⋮ menu → <em>Add to Home screen</em> → Install.</li>
+      <li><strong>iPhone Safari:</strong> Share button → <em>Add to Home Screen</em>.</li>
+      <li>Home screen par Jenni icon aa jayega — browser jaisa hi khulega, address bar ke bina.</li>
+    </ol>
+
+    <h3 class="sheet__sub">3. Security — ye zaroor padho</h3>
+    <ul class="steps steps--todo">
+      <li>Key <strong>is phone ki browser storage</strong> me rehti hai. Phone kho gaya to key bhi ja sakti hai — provider ke dashboard se key <strong>revoke</strong> kar dena.</li>
+      <li>Provider ke dashboard me <strong>spend limit</strong> lagao. Free tier wale provider (Groq, Gemini) se shuru karna sabse safe hai.</li>
+      <li>Yeh app aapke phone se seedha provider ko request bhejti hai. Beech me koi Jenni server nahi hai.</li>
+      <li>Public/shared phone par key save na karein.</li>
+    </ul>
+
+    <h3 class="sheet__sub">4. Voice</h3>
+    <label class="toggle-row" for="speakToggle">
+      <span>
+        <strong>Jawab bol kar sunao</strong>
+        <span class="card__meta">Reply aane par phone padh kar sunayega</span>
+      </span>
+      <input type="checkbox" id="speakToggle" class="switch">
+    </label>
+    <p class="hint">Mic dabane par browser ka apna speech-to-text chalta hai (Chrome/Android par best). Agar aapka provider transcription model deta hai to recording provider ke paas jaati hai; warna browser speech hi use hota hai.</p>
+
+    <h3 class="sheet__sub">5. Backup</h3>
+    <div class="row row--wrap">
+      <button class="btn btn--small" type="button" id="btnExport">Export data</button>
+      <button class="btn btn--small" type="button" id="btnImport">Import data</button>
+      <input type="file" id="importFile" accept="application/json" hidden>
+    </div>
+    <p class="hint">Drafts + settings ka JSON. Key export me <strong>nahi</strong> jaati.</p>
+  </div>
+</section>
+
+<div class="toast-host" id="toastHost" aria-live="polite"></div>
+
+<script src="./app.js"></script>
+</body>
+</html>
