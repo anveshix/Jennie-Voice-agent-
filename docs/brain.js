@@ -169,13 +169,14 @@
   }
 
   /** Everything dynamic that goes after the persona prompt. */
-  function buildContext({ text, memories, now } = {}) {
-    const skills = selectSkills(text);
+  function buildContext({ text, memories, now, packs, team } = {}) {
+    const skills = selectSkills(text).concat((packs || []).map((p) => ({ name: p.name + ' (pack)', prompt: p.body.slice(0, 1200) })));
     return [
       ownerBlock(),
       'TIME: ' + timeBlock(now),
       'MEMORY (what you know about the owner):\n' + memoryBlock(memories),
       AUTONOMY,
+      team && team.length ? 'NEVERMIND TEAM (connected; deliverables are auto-delegated to it): ' + team.map((a) => `${a.name} (${a.role})`).join('; ') : '',
       skills.length ? 'ACTIVE SKILLS:\n' + skills.map((s) => `* ${s.name}: ${s.prompt}`).join('\n') : ''
     ].filter(Boolean).join('\n');
   }

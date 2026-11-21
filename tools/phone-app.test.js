@@ -170,6 +170,7 @@ async function boot(options = {}) {
   window.eval(fs.readFileSync(path.join(ROOT, 'docs.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'github.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'brain.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'connectors.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'));
   await wait(180);
 
@@ -751,6 +752,18 @@ function submit(window, text) {
   await wait(220);
   const last = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].pop();
   ok(last.textContent.includes('Key galat'), '401 explains itself in plain words');
+  b.dom.window.close();
+
+  /* ── master voice switch + memory ─────────────────────────────────────── */
+  b = await boot({});
+  const doc = b.window.document;
+  doc.getElementById('btnVoiceMaster').click();
+  ok(doc.body.classList.contains('voice-off') && b.window.localStorage.getItem('jenni_voice_on') === '0', 'voice master OFF hides mic + persists');
+  doc.getElementById('btnVoiceMaster').click();
+  ok(!doc.body.classList.contains('voice-off'), 'voice master ON restores mic');
+  doc.getElementById('memInput').value = 'Class 12 SA1 Monday';
+  doc.getElementById('btnMemAdd').click();
+  ok(/SA1/.test(b.window.localStorage.getItem('jenni_memory_v1') || ''), 'memory add persists');
   b.dom.window.close();
 
   console.log('\n' + checks + ' checks, ' + (checks - failures) + ' passed' + (failures ? ', ' + failures + ' FAILED' : ''));

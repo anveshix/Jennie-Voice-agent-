@@ -303,3 +303,9 @@ If the AI service is not configured or a provider request fails, Jenni displays 
 Jenni knows the owner profile (from `AGENTS.md`), the current IST date/time, and a long-term **memory** kept only in this browser (`jenni_memory_v1`, wiped by panic). Say "yaad rakho: …", "bhool jao …", or just talk: Jenni saves durable facts and tasks herself via hidden `[[remember/task/done/forget: …]]` tags that are stripped from the reply. Passwords/OTP-like text is never saved. Manage it in **Setup → Memory**.
 
 Skills (official letters, lesson plans, result diagnostics, planner, commerce tutor, CBSE compliance, code, sensitive advice) load only when the message matches. Add one by appending to `SKILLS` in `docs/brain.js`. The Node server uses the same module (profile, time, skills; memory stays on the phone).
+
+## NeverMind agents, skill packs, voice switch
+
+- **NeverMind bridge** (Setup → NeverMind): paste your deployed NeverMind URL (+ token). Requests for worksheets, quizzes, question papers, lesson plans, notices etc. (or `nevermind: …`) are delegated to its 9 agents / 21 verified skills; Jenni returns the summary and file links, and falls back to normal chat on error. "Memory sync" pulls NeverMind's active semantic/procedural memory into Jenni. On the NeverMind server set `NEVERMIND_CORS_ORIGINS` (default `https://anveshix.github.io`) and `NEVERMIND_API_TOKEN`.
+- **Skill packs**: install any public repo's `SKILL.md` files (PpSkills-/skills.sh format, e.g. `anveshix/PpSkills-`); they load when a message matches their description. "Find skills" searches skills.sh.
+- **Voice switch**: the speaker button in the app bar turns all voice (mic, hands-free loop, read-aloud) on/off; saved per device.

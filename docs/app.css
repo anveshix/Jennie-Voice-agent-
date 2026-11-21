@@ -1103,3 +1103,5 @@ code {
   border-color: rgba(252, 211, 77, .35);
 }
 .msg__tool--retry:hover { background: rgba(252, 211, 77, .12); }
+.voice-off #btnMic,.voice-off #btnVoice,.voice-off #btnStopSpeak,.voice-off #btnVoiceTest,.voice-off #btnVoiceStart{display:none!important}
+.voice-off #btnVoiceMaster{color:var(--muted,#8a94a6);border-color:transparent}

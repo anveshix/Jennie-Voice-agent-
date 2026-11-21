@@ -14,6 +14,10 @@
     chat: 'jenni_chat_v1',
     drive: 'jenni_drive_v1',   // client id only
     driveToken: 'jenni_drive_tok_v1', // access token + expiry (session-ish)
+    nm: 'jenni_nm_v1',         // NeverMind url + token
+    nmTeam: 'jenni_nm_team_v1',
+    packs: 'jenni_packs_v1',   // installed SKILL.md packs
+    voiceOn: 'jenni_voice_on', // master voice switch ('0' = off)
     memory: 'jenni_memory_v1', // long-term memory (local only, wiped by panic)
     lock: 'jenni_lock_v1',     // PIN settings + config
     vault: 'jenni_vault_v1'    // the encrypted API key
@@ -41,6 +45,7 @@
   const DOCS = window.JENNI_DOCS || {};
   const GH = window.JENNI_GITHUB || {};
   const BRAIN = window.JENNI_BRAIN;
+  const CN = window.JENNI_CONNECT;
   const $ = (id) => document.getElementById(id);
   const now = () => Date.now();
 
@@ -400,6 +405,33 @@
     ]
   };
 
+  function loadPacks() { return readJson(LS.packs, []); }
+  function nmClient() {
+    const cfg = readJson(LS.nm, null);
+    return CN && cfg && cfg.url ? CN.createNeverMind(cfg) : null;
+  }
+
+  /* ── master voice switch ───────────────────────────────────────────────── */
+  function voiceEnabled() { try { return localStorage.getItem(LS.voiceOn) !== '0'; } catch (e) { return true; } }
+  function paintVoiceMaster() {
+    const on = voiceEnabled();
+    document.body.classList.toggle('voice-off', !on);
+    const b = $('btnVoiceMaster');
+    if (b) {
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-pressed', String(on));
+      b.setAttribute('aria-label', on ? 'Voice on — tap to turn off' : 'Voice off — tap to turn on');
+      b.title = on ? 'Voice ON' : 'Voice OFF';
+      b.querySelector('.vm-slash').style.display = on ? 'none' : '';
+    }
+  }
+  function setVoiceEnabled(on) {
+    try { localStorage.setItem(LS.voiceOn, on ? '1' : '0'); } catch (e) { /* private mode */ }
+    if (!on) { stopVoiceMode(true); stopSpeaking(); }
+    paintVoiceMaster();
+    toast(on ? 'Voice ON' : 'Voice OFF', false);
+  }
+
   function loadMemory() { return BRAIN ? readJson(LS.memory, []) : []; }
   function saveMemory(list) { writeJson(LS.memory, list); paintMemory(); }
 
@@ -408,7 +440,7 @@
       PERSONA.lines.join(' '),
       'Aaj: ' + new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.',
       'Never ask for or repeat API keys, passwords or personal identifiers.',
-      BRAIN ? BRAIN.buildContext({ text: userText, memories: loadMemory() }) : ''
+      BRAIN ? BRAIN.buildContext({ text: userText, memories: loadMemory(), packs: CN ? CN.matchPacks(userText, loadPacks()) : [], team: readJson(LS.nmTeam, []) }) : ''
     ].join(' ');
   }
 
@@ -625,11 +657,23 @@
     let reply = '';
     try {
       // Voice: keep the reply short so speech starts fast. Typed: allow more.
-      const repoContext = await repoContextFor(clean);
-      reply = await askProvider(
-        conversationForApi(clean + repoContext),
-        { maxTokens: voice.mode ? 260 : 600 }
-      );
+      let delegated = null;
+      const nm = nmClient();
+      if (nm && CN.wantsDelegation(clean)) {
+        try {
+          delegated = await nm.delegate(CN.stripPrefix(clean));
+        } catch (error) { toast('NeverMind: ' + error.message, true); }   // fall back to plain chat
+      }
+      if (delegated) {
+        reply = ['NeverMind agents (' + delegated.status + '):', delegated.summary]
+          .concat(delegated.files.map((f) => `[${f.name}](${f.url})`)).join('\n\n');
+      } else {
+        const repoContext = await repoContextFor(clean);
+        reply = await askProvider(
+          conversationForApi(clean + repoContext),
+          { maxTokens: voice.mode ? 260 : 600 }
+        );
+      }
       if (BRAIN) {
         const parsed = BRAIN.extractOps(reply);
         reply = parsed.text;
@@ -748,7 +792,7 @@
   function speak(text) {
     return new Promise((resolve) => {
       const clean = speakableText(text);
-      if (!clean || !window.speechSynthesis) { resolve(false); return; }
+      if (!clean || !window.speechSynthesis || !voiceEnabled()) { resolve(false); return; }
       try {
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(clean);
@@ -1014,6 +1058,7 @@
   }
 
   function startVoiceMode() {
+    if (!voiceEnabled()) { toast('Voice OFF hai — upar speaker button se ON karo', true); return; }
     if (!state.cfg || !state.cfg.apiKey) {
       openSheet('setup');
       setResult('setupResult', 'Voice mode ke liye pehle API key save karo.', 'error');
@@ -2239,6 +2284,7 @@
     /* one-shot mic: listen for a single message */
     $('btnMic').addEventListener('click', () => {
       if (state.listening) { stopListening(); return; }
+      if (!voiceEnabled()) { toast('Voice OFF hai — upar speaker button se ON karo', true); return; }
       const wasMode = voice.mode;
       voice.mode = true;
       listenOnce();
@@ -2256,6 +2302,59 @@
     $('btnVoiceStart').addEventListener('click', () => { closeSheets(); startVoiceMode(); });
 
     $('btnOpenSetup').addEventListener('click', () => openSheet('setup'));
+    if ($('btnVoiceMaster')) { $('btnVoiceMaster').addEventListener('click', () => setVoiceEnabled(!voiceEnabled())); paintVoiceMaster(); }
+    if (CN && $('btnNmSave')) {
+      const cfg0 = readJson(LS.nm, {});
+      $('nmUrl').value = cfg0.url || '';
+      $('nmToken').value = cfg0.token || '';
+      const say = (m, k) => setResult('nmResult', m, k);
+      $('btnNmSave').addEventListener('click', async () => {
+        const cfg = { url: $('nmUrl').value.trim().replace(/\/+$/, ''), token: $('nmToken').value.trim() };
+        if (!cfg.url) { localStorage.removeItem(LS.nm); localStorage.removeItem(LS.nmTeam); say('NeverMind disconnect.', 'ok'); return; }
+        try {
+          const nm = CN.createNeverMind(cfg);
+          await nm.health();
+          const team = await nm.roster();
+          writeJson(LS.nm, cfg); writeJson(LS.nmTeam, team);
+          say('Connected — ' + team.length + ' agents mile. Ab worksheet/quiz/lesson plan wale kaam wahi karega.', 'ok');
+        } catch (error) { say(error.message, 'error'); }
+      });
+      $('btnNmSync').addEventListener('click', async () => {
+        const nm = nmClient();
+        if (!nm) { say('Pehle NeverMind connect karo.', 'error'); return; }
+        try {
+          let list = loadMemory(); const before = list.length;
+          (await nm.memories()).slice(0, 30).forEach((t) => { list = BRAIN.addMemory(list, 'NeverMind: ' + t, 'school'); });
+          saveMemory(list); say((list.length - before) + ' nayi memory aayi.', 'ok');
+        } catch (error) { say(error.message, 'error'); }
+      });
+      const paintPacks = () => {
+        const host = $('packList'); host.textContent = '';
+        loadPacks().forEach((p) => {
+          const row = document.createElement('div'); row.className = 'row';
+          const label = document.createElement('span'); label.style.flex = '1'; label.textContent = p.name + ' — ' + (p.description || '').slice(0, 70);
+          const del = document.createElement('button'); del.type = 'button'; del.className = 'btn btn--ghost'; del.textContent = 'Remove';
+          del.addEventListener('click', () => { writeJson(LS.packs, loadPacks().filter((x) => x.name !== p.name)); paintPacks(); });
+          row.append(label, del); host.appendChild(row);
+        });
+      };
+      $('btnPackAdd').addEventListener('click', async () => {
+        try {
+          say('Skills padh rahi hoon…', 'ok');
+          const found = await CN.fetchPacks($('packRepo').value, GH);
+          const have = loadPacks().filter((p) => !found.some((f) => f.name === p.name));
+          writeJson(LS.packs, have.concat(found).slice(-30)); paintPacks();
+          say(found.length + ' skill install hui: ' + found.map((f) => f.name).join(', '), 'ok');
+        } catch (error) { say(error.message, 'error'); }
+      });
+      $('btnPackFind').addEventListener('click', async () => {
+        try {
+          const r = await CN.searchSkillsSh($('packQuery').value);
+          say(r.length ? r.map((x) => x.name + ' ← ' + x.source).join(' | ') + '  (source repo upar daal ke install karo)' : 'Kuch nahi mila.', r.length ? 'ok' : 'error');
+        } catch (error) { say('skills.sh search nahi ho paya: ' + error.message, 'error'); }
+      });
+      paintPacks();
+    }
     if ($('btnMemAdd') && BRAIN) {
       $('btnMemAdd').addEventListener('click', () => {
         const box = $('memInput');

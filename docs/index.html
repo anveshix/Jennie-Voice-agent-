@@ -130,6 +130,9 @@
         </span>
       </div>
       <div class="appbar__actions">
+        <button class="icon-btn icon-btn--round is-on" type="button" id="btnVoiceMaster" aria-pressed="true" aria-label="Voice on — tap to turn off" title="Voice ON">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path class="vm-slash" style="display:none" d="m3 3 18 18"/></svg>
+        </button>
         <button class="icon-btn icon-btn--round" type="button" id="btnDriveQuick" aria-label="Google Drive connect">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.4 3.2 7.2 12.4"/><path d="M15.6 3.2H8.4L2.8 12.9h7.2z"/><path d="M6.9 17.3h11.2l3.1-5.4H9.9z"/></svg>
           <span class="icon-btn__badge" id="driveBadge" hidden>!</span>
@@ -321,6 +324,24 @@
       <button class="btn btn--ghost" type="button" id="btnMemClear">Clear all</button>
     </div>
 
+    <h3 class="sheet__sub">NeverMind agents &amp; skill packs</h3>
+    <label class="label" for="nmUrl">NeverMind server URL (https)</label>
+    <input class="field mono" id="nmUrl" spellcheck="false" autocapitalize="off" placeholder="https://your-nevermind.onrender.com">
+    <input class="field" id="nmToken" type="password" autocomplete="off" placeholder="API token (optional)">
+    <div class="row row--wrap">
+      <button class="btn btn--primary" type="button" id="btnNmSave">Connect</button>
+      <button class="btn" type="button" id="btnNmSync">Memory sync</button>
+    </div>
+    <label class="label" for="packRepo">Skill pack (GitHub owner/repo with SKILL.md)</label>
+    <input class="field mono" id="packRepo" spellcheck="false" autocapitalize="off" placeholder="anveshix/PpSkills-">
+    <div class="row row--wrap">
+      <button class="btn btn--primary" type="button" id="btnPackAdd">Install</button>
+    </div>
+    <div id="packList"></div>
+    <input class="field" id="packQuery" placeholder="skills.sh par dhundo (e.g. pdf, testing)">
+    <button class="btn" type="button" id="btnPackFind">Find skills</button>
+    <p class="room-result" id="nmResult" role="status" aria-live="polite"></p>
+
     <h3 class="sheet__sub">2. Security</h3>
     <div class="secgrid">
       <div class="secgrid__cell">
@@ -456,6 +477,7 @@
 <script src="./docs.js"></script>
 <script src="./github.js"></script>
 <script src="./brain.js"></script>
+<script src="./connectors.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>
