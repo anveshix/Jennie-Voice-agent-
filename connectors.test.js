@@ -8,7 +8,7 @@ const res = (obj, status = 200) => ({ ok: status < 400, status, json: async () =
 test('NeverMind delegate polls to completion and builds file urls', async () => {
   const seen = [];
   let polls = 0;
-  const nm = c.createNeverMind({ url: 'https://nm.example/', token: 'tk' }, async (url, opts = {}) => {
+  const nm = c.createNeverMind({ url: 'http://localhost:8317/' }, async (url, opts = {}) => {
     seen.push([url, opts.headers && opts.headers.Authorization]);
     if (url.endsWith('/api/command')) return res({ task_id: 'T1' });
     polls += 1;
@@ -16,13 +16,16 @@ test('NeverMind delegate polls to completion and builds file urls', async () => 
   });
   const r = await nm.delegate('worksheet', { sleep: async () => {} });
   assert.equal(r.status, 'COMPLETED');
-  assert.equal(r.files[0].url, 'https://nm.example/api/artifacts/T1/w.md');
-  assert.ok(seen.every(([, a]) => a === 'Bearer tk'));
+  assert.equal(r.files[0].url, 'http://localhost:8317/api/artifacts/T1/w.md');
+  assert.ok(seen.every(([, a]) => a === undefined));   // no credential of any kind is sent
 });
 
-test('unsafe http base is refused; errors are readable', async () => {
-  await assert.rejects(c.createNeverMind({ url: 'http://evil.example' }, async () => res({})).health(), /https/);
-  await assert.rejects(c.createNeverMind({ url: 'https://x.example' }, async () => res({}, 401)).health(), /token/);
+test('only this computer is accepted: remote, LAN, and credentialed URLs are refused', async () => {
+  for (const url of ['http://evil.example', 'https://nm.onrender.com', 'http://192.168.1.20:8317', 'http://10.0.0.5:8317', 'http://user:pw@localhost:8317']) {
+    await assert.rejects(c.createNeverMind({ url }, async () => res({})).health(), /isi computer/, url);
+  }
+  assert.ok(c.isSafeBase('http://localhost:8317') && c.isSafeBase('http://127.0.0.1:8317') && c.isSafeBase('http://[::1]:8317'));
+  await assert.rejects(c.createNeverMind({ url: 'http://localhost:8317' }, async () => res({}, 403)).health(), /ek hi computer/);
 });
 
 test('routing + packs', () => {

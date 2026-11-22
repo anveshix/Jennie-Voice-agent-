@@ -14,7 +14,7 @@
     chat: 'jenni_chat_v1',
     drive: 'jenni_drive_v1',   // client id only
     driveToken: 'jenni_drive_tok_v1', // access token + expiry (session-ish)
-    nm: 'jenni_nm_v1',         // NeverMind url + token
+    nm: 'jenni_nm_v1',         // NeverMind address (localhost only; no secret)
     nmTeam: 'jenni_nm_team_v1',
     packs: 'jenni_packs_v1',   // installed SKILL.md packs
     remind: 'jenni_remind_on', // reminders enabled ('1')
@@ -3845,11 +3845,11 @@
     if ($('btnVoiceMaster')) { $('btnVoiceMaster').addEventListener('click', () => setVoiceEnabled(!voiceEnabled())); paintVoiceMaster(); }
     if (CN && $('btnNmSave')) {
       const cfg0 = readJson(LS.nm, {});
+      if (cfg0.token) { delete cfg0.token; writeJson(LS.nm, cfg0); }      // tokens are no longer used or kept
       $('nmUrl').value = cfg0.url || '';
-      $('nmToken').value = cfg0.token || '';
       const say = (m, k) => setResult('nmResult', m, k);
       $('btnNmSave').addEventListener('click', async () => {
-        const cfg = { url: $('nmUrl').value.trim().replace(/\/+$/, ''), token: $('nmToken').value.trim() };
+        const cfg = { url: $('nmUrl').value.trim().replace(/\/+$/, '') };
         if (!cfg.url) { localStorage.removeItem(LS.nm); localStorage.removeItem(LS.nmTeam); say('NeverMind disconnect.', 'ok'); return; }
         try {
           const nm = CN.createNeverMind(cfg);
