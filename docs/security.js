@@ -214,6 +214,7 @@
     "script-src 'self' https://accounts.google.com",
     "connect-src 'self' https:",   // includes api.github.com and every provider
     "img-src 'self' data:",
+    "media-src 'self' blob:",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self'",
     "frame-src https://accounts.google.com",

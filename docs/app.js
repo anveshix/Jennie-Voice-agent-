@@ -17,8 +17,19 @@
     nm: 'jenni_nm_v1',         // NeverMind url + token
     nmTeam: 'jenni_nm_team_v1',
     packs: 'jenni_packs_v1',   // installed SKILL.md packs
+    remind: 'jenni_remind_on', // reminders enabled ('1')
     voiceOn: 'jenni_voice_on', // master voice switch ('0' = off)
-    memory: 'jenni_memory_v1', // long-term memory (local only, wiped by panic)
+    wins: 'jenni_wins_v1',     // completed tasks (strengths log)
+    activity: 'jenni_activity_v1', // weekly rhythm of the owner's work
+    summary: 'jenni_summary_v1',   // rolling recap of trimmed chat turns
+    actions: 'jenni_actions_v1',   // audit trail of what Jenni did
+    evals: 'jenni_evals_v1',       // self-test history
+    autonomy: 'jenni_autonomy_v1', // ask | smart | auto
+    backup: 'jenni_backup_v1',     // last Drive backup info
+    voicecfg: 'jenni_voicecfg_v1', // chosen speaking/listening engines + their keys (encrypted with the PIN)
+    school: 'jenni_school_v1', // letterhead profile for the Office desk
+    notes: 'jenni_notes_v1',   // owner notes + tasks (brain.js)
+    dk: 'jenni_dk_v1',         // salt for the data key (not secret)
     lock: 'jenni_lock_v1',     // PIN settings + config
     vault: 'jenni_vault_v1',   // the encrypted API key
     memory: 'jenni_memory_v1', // durable facts about the user
@@ -48,14 +59,50 @@
   const SEC = window.JENNI_SECURITY || {};
   const DOCS = window.JENNI_DOCS || {};
   const GH = window.JENNI_GITHUB || {};
+  const BRAIN = window.JENNI_BRAIN;
+  const CN = window.JENNI_CONNECT;
+  const MEM = window.JENNI_MEM;
+  const BUDGET = window.JENNI_BUDGET;
+  const VERIFY = window.JENNI_VERIFY;
+  const TOOLS = window.JENNI_TOOLS;
+  const GOOGLE = window.JENNI_GOOGLE;
+  const AUDIO = window.JENNI_AUDIO;
+  const VOICES = window.JENNI_VOICES;
+  const PRO = window.JENNI_PROACTIVE;
+  const EVALS = window.JENNI_EVALS;
   const AGENT = window.JENNI_AGENT || {};
 
   /* Long-term memory and learned skills. Both are plain localStorage data, so
      they show up in the UI, survive reloads and vanish on "Erase everything".
      Declared after AGENT, which they depend on. */
-  const memory = AGENT.createMemory ? AGENT.createMemory(localStorage) : null;
-  const skills = AGENT.createSkills ? AGENT.createSkills(localStorage) : null;
-  const journal = AGENT.createJournal ? AGENT.createJournal(localStorage) : null;
+  const SECURE_KEYS = [LS.chat, LS.drafts, LS.notes, LS.school, LS.voicecfg, LS.wins, LS.activity, LS.summary, LS.actions, LS.evals, LS.memory, LS.skills, LS.episodes, LS.insights];
+  const vault = new Map();          // decrypted JSON strings while unlocked
+  const vaultQueue = {};            // per-key write chain (keeps writes in order)
+  const secureStore = {
+    getItem(key) {
+      if (!security.enabled || !SECURE_KEYS.includes(key)) return localStorage.getItem(key);
+      return vault.has(key) ? vault.get(key) : null;
+    },
+    setItem(key, value) {
+      if (!security.enabled || !SECURE_KEYS.includes(key)) return localStorage.setItem(key, value);
+      const dataKey = security.dataKey;
+      if (!dataKey) return;                                           // locked: never fall back to plaintext
+      vault.set(key, String(value));
+      vaultQueue[key] = (vaultQueue[key] || Promise.resolve())
+        .then(() => SEC.encryptJson(dataKey, key, JSON.parse(String(value))))
+        .then((blob) => { localStorage.setItem(key + '_enc', JSON.stringify(blob)); localStorage.removeItem(key); return true; })
+        .catch(() => { toast('Data encrypt/save nahi ho paya', true); return false; });
+    },
+    removeItem(key) {
+      localStorage.removeItem(key);
+      if (SECURE_KEYS.includes(key)) { localStorage.removeItem(key + '_enc'); vault.delete(key); }
+    }
+  };
+  const secGet = (key, fallback) => { try { const raw = secureStore.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch (e) { return fallback; } };
+  const secSet = (key, value) => { try { secureStore.setItem(key, JSON.stringify(value)); } catch (e) { /* storage full */ } };
+  const memory = AGENT.createMemory ? AGENT.createMemory(secureStore) : null;
+  const skills = AGENT.createSkills ? AGENT.createSkills(secureStore) : null;
+  const journal = AGENT.createJournal ? AGENT.createJournal(secureStore) : null;
   const $ = (id) => document.getElementById(id);
   const now = () => Date.now();
 
@@ -115,12 +162,24 @@
     toastTimer = setTimeout(() => el.remove(), 3400);
   }
 
+  /* one-time: notes my earlier build stored under agent.js's key (plaintext case) */
+  (function migrateLegacyNotes() {
+    try {
+      const raw = localStorage.getItem(LS.memory);
+      const legacy = raw && splitLegacyNotes(raw);
+      if (!legacy) return;
+      const have = JSON.parse(localStorage.getItem(LS.notes) || '[]');
+      localStorage.setItem(LS.notes, JSON.stringify(legacy.notes.concat(Array.isArray(have) ? have : [])));
+      localStorage.setItem(LS.memory, JSON.stringify(legacy.facts));
+    } catch (e) { /* storage unavailable */ }
+  }());
+
   /* ── state ─────────────────────────────────────────────────────────────── */
   const state = {
     cfg: readJson(LS.config, null),
     drafts: readJson(LS.drafts, []),
     chat: readJson(LS.chat, []),
-    memory: readJson(LS.memory, []),
+    notes: readJson(LS.notes, []),
     drive: readJson(LS.drive, { clientId: '' }),
     driveToken: readJson(LS.driveToken, null),
     busy: false,
@@ -230,6 +289,9 @@
       max_tokens: options.maxTokens || 500
     };
 
+    if (options.onDelta) body.stream = true;
+    if (options.tools) { body.tools = options.tools; body.tool_choice = 'auto'; }
+
     if (isGemini(cfg)) {
       const effort = THINKING_FLOOR[model] || 'minimal';
       body.reasoning_effort = effort;
@@ -239,6 +301,57 @@
       if (effort === 'minimal') delete body.temperature;   // 3.6 ignores sampling anyway
     }
     return body;
+  }
+
+  /* Server-sent events from an OpenAI-compatible endpoint → text, delivered to
+     options.onDelta(chunk) as it arrives so the bubble and the voice start at once. */
+  async function readStream(response, options, started) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const readWithIdle = () => new Promise((resolve, reject) => {
+      const t = setTimeout(() => {
+        try { reader.cancel(); } catch (e) { /* ignore */ }
+        const err = new Error('Provider ne jawab beech me rok diya.');
+        err.code = 'TIMEOUT';
+        reject(err);
+      }, 25000);
+      reader.read().then((r) => { clearTimeout(t); resolve(r); }, (e) => { clearTimeout(t); reject(e); });
+    });
+    let buf = '', text = '', finish = '';
+    for (;;) {
+      const { done, value } = await readWithIdle();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === '[DONE]') continue;
+        let json;
+        try { json = JSON.parse(data); } catch (e) { continue; }
+        const choice = json.choices && json.choices[0];
+        if (!choice) continue;
+        if (choice.finish_reason) finish = choice.finish_reason;
+        const delta = choice.delta && choice.delta.content;
+        if (delta) { text += delta; options.onDelta(delta); }
+      }
+    }
+    const out = text.trim();
+    if (!out) {
+      const error = new Error(finish === 'length' ? 'Jawab budget khatam ho gaya. Dobara try karo.' : 'Provider ne khali jawab bheja.');
+      error.code = 'EMPTY_REPLY';
+      throw error;
+    }
+    if (finish === 'length') {
+      const error = new Error('Jawab beech me kat gaya.');
+      error.code = 'TRUNCATED';
+      error.partial = out;
+      throw error;
+    }
+    app.lastLatency = Date.now() - started;
+    return out;
   }
 
   async function callProvider(messages, options = {}) {
@@ -260,6 +373,12 @@
         body: JSON.stringify(buildRequestBody(cfg, model, messages, options)),
         signal: controller.signal
       });
+
+      if (options.onDelta && response.ok && response.body && response.body.getReader
+          && /text\/event-stream/i.test(response.headers.get('content-type') || '')) {
+        clearTimeout(timer);                      // streaming has its own idle timeout
+        return await readStream(response, options, started);
+      }
 
       const payload = await response.json().catch(() => null);
 
@@ -289,6 +408,7 @@
       }
 
       const choice = payload && payload.choices && payload.choices[0];
+      if (options.raw && choice && choice.message) { app.lastLatency = Date.now() - started; return choice.message; }
       const content = choice && choice.message && choice.message.content;
       const finish = choice && choice.finish_reason;
 
@@ -377,6 +497,7 @@
         const canRetry = RETRYABLE.has(error.code) && attempt < 2 && !options.noRetry;
         if (!canRetry) throw error;
         attempt += 1;
+        if (options.onReset) options.onReset();     // drop a half-streamed answer before retrying
         setStatus('busy');
         await sleep(700 * attempt);
       }
@@ -444,26 +565,77 @@
     toast(on ? 'Voice ON' : 'Voice OFF', false);
   }
 
-  function loadMemory() { return BRAIN ? state.memory : []; }
-  function saveMemory(list) { state.memory = list; persist('memory'); paintMemory(); }
+  function loadNotes() { return BRAIN ? state.notes : []; }
+  function saveNotes(list) { state.notes = normalizeTasks(list); persist('notes'); paintNotes(); syncReminders(); if (typeof paintSuggestions === 'function') paintSuggestions(); }
 
-  /* ── encrypted storage for chat, drafts and memory ─────────────────────────
-     With a PIN set, these live only as AES-GCM blobs (`<key>_enc`). While the
-     app is locked nothing is written and nothing is held in memory. */
-  const writeChain = {};
+  /* ── encrypted storage ────────────────────────────────────────────────────
+     With a PIN set, chat, drafts, notes AND the agent's facts, playbooks and
+     journal live only as AES-GCM blobs (`<key>_enc`). `secureStore` is a
+     localStorage-shaped adapter, so agent.js needs no changes. While locked it
+     reads nothing and writes nothing. */
+  async function flushVault() {
+    await Promise.all(Object.keys(vaultQueue).map((k) => vaultQueue[k]));
+  }
   function persist(name) {
     const key = LS[name];
     const value = name === 'chat' ? state.chat.filter((m) => !m.pending) : state[name];
     if (!security.enabled) return Promise.resolve(writeJson(key, value));
-    const dataKey = security.dataKey;
-    if (!dataKey) return Promise.resolve(false);              // locked: never fall back to plaintext
-    writeChain[name] = (writeChain[name] || Promise.resolve())
-      .then(() => SEC.encryptJson(dataKey, key, value))
-      .then((blob) => { localStorage.setItem(key + '_enc', JSON.stringify(blob)); localStorage.removeItem(key); return true; })
-      .catch(() => { toast('Data encrypt/save nahi ho paya', true); return false; });
-    return writeChain[name];
+    secureStore.setItem(key, JSON.stringify(value));
+    return vaultQueue[key] || Promise.resolve(true);
   }
-  const persistAll = () => Promise.all(['chat', 'drafts', 'memory'].map(persist));
+  /* ── reminders ─────────────────────────────────────────────────────────────
+     The service worker cannot read encrypted storage, so a minimal index goes to
+     IndexedDB: due dates only when a PIN is set, plus titles when it is not. */
+  const RSTORE = window.JENNI_REMIND_STORE;
+  const remindOn = () => { try { return localStorage.getItem(LS.remind) === '1'; } catch (e) { return false; } };
+  async function syncReminders() {
+    if (!RSTORE || !BRAIN || !window.indexedDB || security.enabled && !security.dataKey) return;   // locked: keep the last index
+    try {
+      const prev = (await RSTORE.get('index')) || {};
+      const titles = !security.enabled;
+      const items = state.notes.filter((m) => m.cat === 'task' && m.due).map((m) => ({ due: m.due, text: titles ? m.text : '' }));
+      await RSTORE.set('index', { on: remindOn(), titles, items, lastKey: prev.lastKey || '' });
+    } catch (e) { /* IndexedDB blocked (private mode): in-page reminders still work */ }
+  }
+  async function remindTick() {
+    if (!remindOn() || !('Notification' in window) || Notification.permission !== 'granted') return;
+    if (security.enabled && !security.dataKey) return;
+    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: 'numeric', hour12: false }).format(new Date())) % 24;
+    if (hour < 8) return;
+    await syncReminders();
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.ready.catch(() => null);
+    if (reg && reg.active) reg.active.postMessage('remind-now');
+  }
+  async function setReminders(on) {
+    const info = $('remindInfo');
+    if (!on) { localStorage.setItem(LS.remind, '0'); await syncReminders(); info.textContent = 'Reminders band.'; return false; }
+    if (!('Notification' in window)) { info.textContent = 'Ye browser notifications support nahi karta.'; return false; }
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { info.textContent = 'Notification permission nahi mili — browser settings me allow karo.'; return false; }
+    localStorage.setItem(LS.remind, '1');
+    await syncReminders();
+    let bg = false;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg.periodicSync) { await reg.periodicSync.register('jenni-remind', { minInterval: 12 * 60 * 60 * 1000 }); bg = true; }
+    } catch (e) { /* not installed as an app, or not supported */ }
+    info.textContent = bg
+      ? 'ON — app band hone par bhi din me 1-2 baar check hoga (Android me app Home screen par install ho). ' + (security.enabled ? 'PIN ki wajah se notification me task ka naam nahi, sirf count aayega.' : '')
+      : 'ON — app khula ya background me ho tab reminder aayega. Band app ke liye Chrome me "Add to Home screen" karo.';
+    remindTick();
+    return true;
+  }
+
+  const persistAll = async () => {
+    await Promise.all(['chat', 'drafts', 'notes'].map(persist));
+    // agent.js keys: carry over whatever is plaintext (enable) or already decrypted (PIN change)
+    SECURE_KEYS.forEach((key) => {
+      if (['chat', 'drafts', 'notes'].some((n) => LS[n] === key)) return;
+      const value = vault.has(key) ? vault.get(key) : localStorage.getItem(key);
+      if (value != null) secureStore.setItem(key, value);
+    });
+    await flushVault();
+  };
 
   async function initDataKey(pin, fresh) {
     let salt = localStorage.getItem(LS.dk);
@@ -471,42 +643,79 @@
     security.dataKey = await SEC.deriveDataKey(pin, salt);
   }
 
-  /* Load the three stores after unlock; migrate any legacy plaintext copy. */
+  /* My old build stored notes in `jenni_memory_v1`, which agent.js also owns
+     (facts have `kind`, notes have `cat`). Split them apart once. */
+  function splitLegacyNotes(raw) {
+    let list; try { list = JSON.parse(raw); } catch (e) { return null; }
+    if (!Array.isArray(list)) return null;
+    const mine = list.filter((x) => x && x.cat && !x.kind);
+    return mine.length ? { notes: mine, facts: list.filter((x) => !(x && x.cat && !x.kind)) } : null;
+  }
+
+  /* Load everything after unlock; migrate any legacy plaintext copy. */
   async function hydrate() {
-    for (const name of ['chat', 'drafts', 'memory']) {
-      const key = LS[name];
-      const raw = localStorage.getItem(key + '_enc');
-      if (raw && security.dataKey) {
-        try { state[name] = await SEC.decryptJson(security.dataKey, key, JSON.parse(raw)); }
-        catch (error) { state[name] = []; toast('Ek saved data padha nahi ja saka (' + name + ')', true); }
-      } else {
-        state[name] = readJson(key, []);
-        if (security.enabled && security.dataKey && localStorage.getItem(key)) await persist(name);   // encrypt + remove plaintext
+    vault.clear();
+    for (const key of SECURE_KEYS) {
+      const enc = localStorage.getItem(key + '_enc');
+      if (enc && security.dataKey) {
+        try { vault.set(key, JSON.stringify(await SEC.decryptJson(security.dataKey, key, JSON.parse(enc)))); }
+        catch (error) { toast('Ek saved data padha nahi ja saka (' + key.replace('jenni_', '') + ')', true); }
+      } else if (security.enabled && security.dataKey && localStorage.getItem(key) != null) {
+        vault.set(key, localStorage.getItem(key));
+        secureStore.setItem(key, localStorage.getItem(key));          // encrypt + remove plaintext
       }
     }
+    const legacy = vault.has(LS.memory) ? splitLegacyNotes(vault.get(LS.memory)) : null;
+    if (legacy) {
+      vault.set(LS.notes, JSON.stringify(legacy.notes.concat(JSON.parse(vault.get(LS.notes) || '[]'))));
+      secureStore.setItem(LS.notes, vault.get(LS.notes));
+      secureStore.setItem(LS.memory, JSON.stringify(legacy.facts));
+    }
+    for (const name of ['chat', 'drafts', 'notes']) {
+      try { state[name] = JSON.parse(vault.get(LS[name]) || '[]'); } catch (e) { state[name] = []; }
+      if (!Array.isArray(state[name])) state[name] = [];
+    }
+    await flushVault();
+  }
+
+  /* The system prompt is assembled from prioritised sections and fitted to a
+     token budget, so a long profile can never crowd out the conversation. */
+  const PROMPT_BUDGET = 3300;       // system prompt tokens
+  const HISTORY_BUDGET = 1500;      // recent turns
+  function unifiedMemoryLines(userText) {
+    if (!MEM) return null;
+    return MEM.unify({ facts: memory ? memory.all() : [], notes: state.notes, text: userText, now: Date.now(), limit: 8 }).map((i) => i.text);
+  }
+
+  function promptSections(userText) {
+    const persona = [
+      PERSONA.lines.join(' '),
+      'Aaj: ' + new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.',
+      'Never ask for or repeat API keys, passwords or personal identifiers.'
+    ].join(' ');
+    const sections = [{ id: 'persona', priority: 1, text: persona }];
+    if (BRAIN) {
+      sections.push(...BRAIN.contextSections({
+        text: userText, memories: loadNotes(), memoryLines: unifiedMemoryLines(userText),
+        packs: CN ? CN.matchPacks(userText, loadPacks()) : [], team: readJson(LS.nmTeam, [])
+      }));
+    }
+    const recap = secGet(LS.summary, '');
+    if (recap) sections.push({ id: 'recap', priority: 5, text: 'EARLIER IN THIS CHAT (recap): ' + recap });
+    const extra = agentContextFor(userText).trim();
+    if (extra) sections.push({ id: 'agent', priority: 6, text: extra });
+    return sections;
   }
 
   function personaPrompt(userText) {
-    return [
-      PERSONA.lines.join(' '),
-      'Aaj: ' + new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.',
-      'Never ask for or repeat API keys, passwords or personal identifiers.',
-      BRAIN ? BRAIN.buildContext({ text: userText, memories: loadMemory(), packs: CN ? CN.matchPacks(userText, loadPacks()) : [], team: readJson(LS.nmTeam, []) }) : ''
-    ].join(' ');
+    const sections = promptSections(userText);
+    return BUDGET ? BUDGET.fit(sections, PROMPT_BUDGET).text : sections.map((x) => x.text).join('\n');
   }
 
-  const SYSTEM_PROMPT = personaPrompt();
 
   /** The facts and the playbook that matter for *this* message. */
   function agentContextFor(userText) {
     const parts = [];
-    if (memory) {
-      const facts = memory.recall(userText, 6);
-      if (facts.length) {
-        parts.push('User ke baare me yaad hai (sirf zaroorat par use karo, list mat do):\n'
-          + facts.map((fact) => '- ' + fact.text).join('\n'));
-      }
-    }
     if (skills) {
       const matched = skills.match(userText);
       if (matched.length) {
@@ -528,13 +737,215 @@
     return parts.length ? '\n\n' + parts.join('\n\n') : '';
   }
 
-  function conversationForApi(userText) {
-    // Recent turns only: older messages make the first token slower and rarely help.
-    const history = state.chat.slice(-8)
-      .filter((m) => m.text && !m.pending && !String(m.text).startsWith('Maaf karo'))
+  function conversationForApi(userText, options = {}) {
+    let history = options.noHistory ? [] : state.chat
+      .filter((m) => m.text && !m.pending && !m.failed && !String(m.text).startsWith('Maaf karo'))
       .map((m) => ({ role: m.role === 'me' ? 'user' : 'assistant', content: m.text }));
-    const system = personaPrompt() + agentContextFor(userText);
-    return [{ role: 'system', content: system }, ...history, { role: 'user', content: userText }];
+    if (BUDGET && history.length) {
+      // newest turns that fit; what falls off is condensed into a recap instead of vanishing
+      const trimmed = BUDGET.trimHistory(history, HISTORY_BUDGET, 2);
+      if (trimmed.dropped.length) {
+        const old = secGet(LS.summary, '');
+        const fresh = BUDGET.summarize(trimmed.dropped, old);
+        if (fresh !== old) secSet(LS.summary, fresh);
+      }
+      history = trimmed.kept;
+    } else history = history.slice(-8);
+    return [{ role: 'system', content: personaPrompt(userText) }, ...history, { role: 'user', content: userText }];
+  }
+
+
+  /* ══════════════════════════════════════════════════════ AGENT: tools, hygiene */
+
+  const WD_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const todayIso = () => (PRO ? PRO.istDay(now()) : new Date().toISOString().slice(0, 10));
+
+  /* "har Monday result report" → a recurring task with a real due date. */
+  function normalizeTasks(list) {
+    if (!MEM || !BRAIN) return list;
+    return list.map((n) => {
+      if (n.cat !== 'task' || n.rc) return n;
+      const r = MEM.parseRepeat(n.text);
+      const out = Object.assign({}, n, { rc: 1 });
+      if (r.repeat) {
+        out.repeat = r.repeat;
+        if (Number.isInteger(r.weekday)) out.weekday = r.weekday;
+        const cleaned = MEM.cleanRepeatWords(n.text);
+        if (cleaned.length >= 3) out.text = cleaned;
+        if (!out.due) out.due = r.repeat === 'weekly' && Number.isInteger(r.weekday) ? BRAIN.parseDueDate(WD_NAMES[r.weekday]) : BRAIN.parseDueDate('aaj');
+      }
+      return out;
+    });
+  }
+
+  /* One-step undo for anything destructive Jenni (or the owner) does to memory. */
+  const undoStack = [];
+  function snapshot() {
+    undoStack.push({ notes: JSON.parse(JSON.stringify(state.notes)), facts: memory ? memory.all() : [] });
+    if (undoStack.length > 5) undoStack.shift();
+  }
+  function undoLast() {
+    const snap = undoStack.pop();
+    if (!snap) return false;
+    saveNotes(snap.notes);
+    secureStore.setItem(LS.memory, JSON.stringify(snap.facts));
+    paintMemory();
+    return true;
+  }
+
+  function completeNote(query) {
+    if (!MEM) return null;
+    const r = MEM.completeTask(state.notes, query, todayIso(), now());
+    if (!r.win) return null;
+    snapshot();
+    saveNotes(r.notes);
+    secSet(LS.wins, [r.win].concat(secGet(LS.wins, [])).slice(0, 200));
+    return r;
+  }
+
+  function auditPush(entry) { secSet(LS.actions, [entry].concat(secGet(LS.actions, [])).slice(0, 100)); }
+
+  function askApproval({ name, args, tainted }) {
+    const what = {
+      gmail_draft: `Gmail DRAFT banana — To: ${args.to}, Subject: ${args.subject}`,
+      calendar_create_event: `Calendar me event: "${args.title}" @ ${args.start}`,
+      delegate_nevermind: `NeverMind agents ko kaam dena: ${String(args.request).slice(0, 120)}`,
+      forget: `Memory se hataana: "${args.text}"`,
+      correct_memory: `Memory badalna: "${args.wrong}" → "${args.right}"`
+    }[name] || `${name} (${JSON.stringify(args).slice(0, 100)})`;
+    return Promise.resolve(window.confirm('Jenni ye karna chahti hai:\n• ' + what + (tainted ? '\n\n(Dhyan: ye mail/web/calendar se padhe content ke baad aaya hai — pehchaan lo ki ye aapki hi marzi hai.)' : '') + '\n\nAllow?'));
+  }
+
+  function googleReady() {
+    return Boolean(GOOGLE && state.drive && state.drive.extended && state.driveToken && state.driveToken.expires > now());
+  }
+  function googleClient() {
+    return GOOGLE.createGoogle({ getToken: async () => { if (!googleReady()) throw new Error('Google connect nahi hai — Drive tab me Connect dabao.'); return state.driveToken.token; } });
+  }
+
+  const taskLine = (t) => `${t.text}${t.due ? ' (due ' + t.due + ')' : ''}${t.repeat ? ' [' + t.repeat + ']' : ''}`;
+  const toolHandlers = {
+    async list_tasks({ filter }) {
+      const tasks = state.notes.filter((n) => n.cat === 'task');
+      const keep = { all: () => true, overdue: (t) => BRAIN.taskState(t) === 'overdue', today: (t) => BRAIN.taskState(t) === 'today', week: (t) => ['overdue', 'today', 'soon'].includes(BRAIN.taskState(t)) || (t.due && Date.parse(t.due) - now() < 7 * 86400000) }[filter || 'all'] || (() => true);
+      const list = tasks.filter(keep);
+      return list.length ? list.map(taskLine).join('\n') : 'No matching tasks.';
+    },
+    async today_overview() {
+      const parts = [];
+      const tasks = state.notes.filter((n) => n.cat === 'task' && ['overdue', 'today', 'soon'].includes(BRAIN.taskState(n)));
+      parts.push(tasks.length ? 'Tasks:\n' + tasks.map(taskLine).join('\n') : 'Tasks: nothing due soon.');
+      if (googleReady()) {
+        try { const ev = await googleClient().events(1, now()); parts.push(ev.length ? 'Calendar:\n' + ev.map((e) => `${e.start.slice(11, 16) || 'all-day'} ${e.title}`).join('\n') : 'Calendar: free.'); }
+        catch (e) { parts.push('Calendar unavailable: ' + e.message); }
+      }
+      return parts.join('\n');
+    },
+    async add_task({ title, due, repeat }) {
+      const rep = MEM.parseRepeat(title + ' ' + (repeat || ''));
+      let list = BRAIN.addMemory(state.notes, MEM.cleanRepeatWords(title) || title, 'task', now(), BRAIN.parseDueDate(due || title, now()));
+      if (list === state.notes) return { error: 'Not saved (duplicate, or it looks like private data).' };
+      const added = list[list.length - 1];
+      if (repeat && !rep.repeat) added.repeat = repeat; else if (rep.repeat) { added.repeat = rep.repeat; if (Number.isInteger(rep.weekday)) added.weekday = rep.weekday; }
+      added.rc = 1;
+      if (added.repeat && !added.due) added.due = todayIso();
+      saveNotes(list);
+      return `Saved: ${taskLine(added)}`;
+    },
+    async complete_task({ title }) {
+      const r = completeNote(title);
+      return r ? (r.rolled ? `Done — next one scheduled.` : 'Done — task cleared.') : { error: 'No matching task.' };
+    },
+    async remember({ fact }) {
+      if (MEM.isShortcoming(fact)) return { error: 'Not stored: Jenni keeps what helps, not self-criticism.' };
+      const list = BRAIN.addMemory(state.notes, fact, null, now());
+      if (list === state.notes) return { error: 'Not saved (duplicate or private data).' };
+      saveNotes(list);
+      return 'Remembered.';
+    },
+    async search_memory({ query }) {
+      const found = MEM.unify({ facts: memory ? memory.all() : [], notes: state.notes, text: query, now: now(), limit: 6 }).map((i) => '- ' + i.text);
+      const tasks = state.notes.filter((n) => n.cat === 'task' && MEM.overlap(query, n.text) > 0.3).map((t) => '- [task] ' + taskLine(t));
+      return found.concat(tasks).join('\n') || 'Nothing remembered about that.';
+    },
+    async forget({ text }) {
+      snapshot();
+      const before = state.notes.length + (memory ? memory.all().length : 0);
+      saveNotes(BRAIN.removeMemory(state.notes, text));
+      if (memory) memory.all().filter((f) => MEM.overlap(text, f.text) >= 0.6).forEach((f) => memory.forget(f.id));
+      const after = state.notes.length + (memory ? memory.all().length : 0);
+      return before === after ? { error: 'Nothing matched.' } : `Removed ${before - after} item(s). (Say "undo" to bring it back.)`;
+    },
+    async correct_memory({ wrong, right }) {
+      snapshot();
+      const r = MEM.correct({ facts: memory ? memory.all() : [], notes: state.notes }, wrong, right);
+      secureStore.setItem(LS.memory, JSON.stringify(r.facts));
+      let notes = r.notes;
+      if (r.add && !MEM.isShortcoming(r.add)) notes = BRAIN.addMemory(notes, r.add, null, now());
+      saveNotes(notes); paintMemory();
+      return 'Corrected. (Say "undo" to revert.)';
+    },
+    async make_document({ type, fields }) {
+      const values = Object.assign({ lang: 'hi' }, fields || {});
+      const built = officeMake(type, values);
+      const issues = VERIFY.check(built.text, { document: true, udise: BRAIN.OWNER.udise }).issues.map((i) => i.msg);
+      saveDraft(built.text, true);
+      return { saved_to_drafts: built.title, issues, preview: built.text.slice(0, 500) };
+    },
+    async calendar_events({ days }) { const ev = await googleClient().events(days || 1, now()); return ev.length ? ev.map((e) => `${e.start} — ${e.title}${e.where ? ' @ ' + e.where : ''}`).join('\n') : 'No events.'; },
+    async gmail_search({ query, max }) { const m = await googleClient().searchMail(query, max || 5); return m.length ? m.map((x) => `From: ${x.from} | ${x.subject} | ${x.date}\n${x.snippet}`).join('\n---\n') : 'No messages.'; },
+    async gmail_draft(a) { await googleClient().createDraft(a); return 'Draft saved in Gmail (not sent).'; },
+    async calendar_create_event(a) { const r = await googleClient().createEvent(a); return 'Event created.' + (r.link ? ' ' + r.link : ''); },
+    async delegate_nevermind({ request }) {
+      const nm = nmClient(); if (!nm) return { error: 'NeverMind not connected.' };
+      const r = await nm.delegate(request);
+      return `${r.status}: ${r.summary}\n` + r.files.map((f) => `${f.name}: ${f.url}`).join('\n');
+    },
+    async read_github_repo({ repo }) { return (await GH.readRepo(repo)).apiBlock; }
+  };
+
+  function getToolbox() {
+    return TOOLS.createToolbox({
+      handlers: toolHandlers, approve: askApproval, audit: auditPush,
+      autonomy: () => localStorage.getItem(LS.autonomy) || 'smart',
+      available: (n) => (n === 'google' ? googleReady() : n === 'nevermind' ? Boolean(nmClient()) : true),
+      now
+    });
+  }
+
+  const looksLikeToolUnsupported = (e) => /tool|function|tool_choice/i.test(String(e && e.message)) && !/key|quota|limit/i.test(String(e && e.message));
+
+  async function runToolTurn(clean, repoContext, turn) {
+    const out = await TOOLS.runLoop({
+      chat: (msgs, tools) => askProvider(msgs, Object.assign({ raw: true, maxTokens: 700 }, tools ? { tools } : {})),
+      messages: conversationForApi(clean + repoContext),
+      toolbox: getToolbox(),
+      turn
+    });
+    return out.text;
+  }
+
+  /* Deterministic check of what she wrote; one repair pass when it is wrong. */
+  async function verifyReply(reply, clean, repoContext, canRepair) {
+    if (!VERIFY || !reply) return { reply, checks: null };
+    const docLike = Boolean(DOCS.looksLikeDocumentText(reply) || DOCS.looksLikeDocRequest(clean));
+    const ctx = { udise: BRAIN.OWNER.udise, document: docLike };
+    let res = VERIFY.check(reply, ctx);
+    if (!res.ok && canRepair) {
+      try {
+        setStatus('busy');
+        const fixed = await askProvider(
+          conversationForApi(clean + repoContext).concat([{ role: 'assistant', content: reply }, { role: 'user', content: VERIFY.repairPrompt(res.issues) }]),
+          { maxTokens: 900, temperature: 0.2 }
+        );
+        const again = VERIFY.check(fixed, ctx);
+        const errs = (r) => r.issues.filter((i) => i.level === 'error').length;
+        if (fixed && errs(again) < errs(res)) { reply = fixed; res = again; }
+      } catch (e) { /* keep the original; the warning below still shows */ }
+    }
+    const notes = res.issues.map((i) => (i.level === 'error' ? '⚠ ' : '• ') + i.msg);
+    if (!notes.length && !docLike) return { reply, checks: null };
+    return { reply, checks: { ok: res.ok, notes: notes.slice(0, 4) } };
   }
 
   /* ══════════════════════════════════════════════════════════════ CHAT UI */
@@ -557,15 +968,25 @@
 
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
-    if (message.pending) {
+    if (message.pending && !message.text) {
       bubble.classList.add('is-thinking');
       bubble.innerHTML = '<i></i><i></i><i></i>';
+    } else if (message.pending) {
+      bubble.classList.add('is-streaming');
+      bubble.innerHTML = renderMd(message.text);
     } else if (message.role === 'me') {
       bubble.textContent = message.text;
     } else {
       bubble.innerHTML = renderMd(message.text);
     }
     row.appendChild(bubble);
+
+    if (message.checks && !message.pending) {
+      const strip = document.createElement('div');
+      strip.className = 'msg__checks' + (message.checks.ok ? ' is-ok' : ' is-warn');
+      strip.textContent = message.checks.notes.length ? message.checks.notes.join('  ') : '✓ Date, hisaab aur format check ho gaya';
+      row.appendChild(strip);
+    }
 
     if (message.role === 'jenni' && !message.pending && message.text) {
       const foot = document.createElement('div');
@@ -741,10 +1162,16 @@
       return;
     }
 
+    if (/^(undo|wapas karo|pichla badlav wapas|undo that)\.?$/i.test(clean)) {
+      toast(undoLast() ? 'Pichla badlav wapas kar diya' : 'Wapas karne ko kuch nahi', false);
+      return;
+    }
     if (BRAIN) {
       const cmd = BRAIN.userCommand(clean);
-      if (cmd) { saveMemory(BRAIN.applyOps(loadMemory(), [cmd])); toast('Yaad rakh liya', false); }
+      if (cmd && MEM && MEM.isShortcoming(cmd.body)) toast('Ye main yaad nahi rakhungi — hum aapki taakat par kaam karte hain', false);
+      else if (cmd) { snapshot(); saveNotes(BRAIN.applyOps(loadNotes(), [cmd])); toast('Yaad rakh liya', false); }
     }
+    if (PRO) secSet(LS.activity, PRO.recordIntent(secGet(LS.activity, {}), PRO.intentOf(clean), now()));
 
     state.busy = true;
     $('input').value = '';
@@ -758,24 +1185,64 @@
     setStatus('busy');
 
     let reply = '';
+    let untrusted = false;                 // external text in this turn → it may not write memory
+    const speaker = (voice.mode || options.speakAlways) && voiceEnabled() && window.speechSynthesis ? createSpeaker() : null;
+    let streamed = '', lastPaint = 0;
+    const onDelta = (chunk) => {
+      streamed += chunk;
+      pending.text = streamed.replace(/\[\[[\s\S]*$/, '').trim();       // hide a memory tag while it is being written
+      const t = Date.now();
+      if (t - lastPaint > 80) { lastPaint = t; paintChat(); }
+      if (speaker) speaker.push(chunk);
+    };
+    const onReset = () => { streamed = ''; pending.text = ''; if (speaker) speaker.reset(); };
+    voice.activeSpeaker = speaker;
     try {
+      if (navigator.onLine === false) throw Object.assign(new Error('Internet nahi hai — connect hote hi dobara bhejna.'), { code: 'OFFLINE' });
       // Voice: keep the reply short so speech starts fast. Typed: allow more.
       const repoContext = await repoContextFor(clean);
 
       // Learn durable facts before asking — "mera naam Aarav hai" must survive
       // the next reload, not just this conversation.
-      if (memory) {
+      if (memory && !(MEM && MEM.isShortcoming(clean))) {
         const learned = memory.observe(clean, 'chat');
         if (learned.length) memory.compact();
       }
 
-      reply = await askProvider(
-        conversationForApi(clean + repoContext),
-        { maxTokens: voice.mode ? 260 : 600 }
-      );
+      let delegated = null;
+      const nm = nmClient();
+      if (nm && CN && CN.wantsDelegation(clean)) {
+        try {
+          delegated = await nm.delegate(CN.stripPrefix(clean));
+        } catch (error) { toast('NeverMind: ' + error.message, true); }   // fall back to plain chat
+      }
+      const turn = { tainted: Boolean(repoContext) };
+      if (delegated || repoContext) untrusted = true;
+      let usedTools = false;
+      if (!delegated && TOOLS && !state.noTools && TOOLS.needsTools(clean)) {
+        try {
+          reply = await runToolTurn(clean, repoContext, turn);
+          usedTools = Boolean(reply);
+          if (turn.tainted) untrusted = true;
+        } catch (error) {
+          if (looksLikeToolUnsupported(error)) state.noTools = true;        // this provider/model has no function calling
+          else throw error;
+        }
+      }
+      if (usedTools) {
+        /* answered through tools */
+      } else if (delegated) {
+        reply = ['NeverMind agents (' + delegated.status + '):', delegated.summary]
+          .concat(delegated.files.map((f) => `[${f.name}](${f.url})`)).join('\n\n');
+      } else {
+        reply = await askProvider(
+          conversationForApi(clean + repoContext),
+          { maxTokens: voice.mode ? 260 : 600, onDelta, onReset }
+        );
+      }
 
       // One self-check pass: a plan-shaped question deserves more than "haan".
-      if (AGENT.critiqueAnswer && !voice.mode) {
+      if (AGENT.critiqueAnswer && !voice.mode && !(speaker && speaker.spoken())) {
         const verdict = AGENT.critiqueAnswer(reply, clean);
         if (!verdict.ok) {
           setStatus('busy');
@@ -787,6 +1254,17 @@
           );
           if (better && better.length > reply.length * 0.6) reply = better;
         }
+      }
+      if (BRAIN) {
+        const parsed = BRAIN.extractOps(reply);
+        reply = parsed.text;
+        const ops = MEM ? parsed.ops.filter((o) => !MEM.isShortcoming(o.body)) : parsed.ops;
+        if (ops.length && !untrusted) { snapshot(); saveNotes(BRAIN.applyOps(loadNotes(), ops)); toast('Memory update ho gayi', false); }
+      }
+      if (!delegated) {
+        const v = await verifyReply(reply, clean, repoContext, !voice.mode && !(speaker && speaker.spoken()));
+        reply = v.reply;
+        if (v.checks) pending.checks = v.checks;
       }
       /* A useful step-by-step answer becomes a reusable playbook, so the next
          similar question starts from experience instead of zero (Hermes-style). */
@@ -800,6 +1278,7 @@
     } catch (error) {
       pending.pending = false;
       pending.failed = true;                 // drives the Retry button
+      if (speaker) speaker.reset();
       pending.text = 'Jawab nahi aaya. ' + plainError(error);
       pending.retryText = clean;             // the question to send again
       reply = '';
@@ -830,7 +1309,8 @@
     }
 
     // Voice mode always reads the answer; typed chat only when the user asked.
-    if (options.speakAlways || voice.mode) await speak(reply);
+    if (speaker && speaker.spoken() && reply) await speaker.finish();     // already speaking as it streamed
+    else if (options.speakAlways || voice.mode) await speak(reply);
     else maybeSpeakLast();
 
     if (voice.mode && !voice.stopping) scheduleListen(400);
@@ -865,7 +1345,12 @@
     lastHandledAt: 0,
     cooldownUntil: 0,
     stopping: false,
-    restartTimer: null
+    restartTimer: null,
+    wake: null,
+    lastWake: 0,
+    barge: null,
+    saying: '',
+    activeSpeaker: null
   };
 
   const BCP = { 'hi-IN': 'hi-IN', 'en-IN': 'en-IN', 'en-US': 'en-US', 'en-GB': 'en-GB' };
@@ -904,39 +1389,135 @@
     return text.slice(0, 900);
   }
 
-  function speak(text) {
+
+  /* ── voice engines: browser (default), ElevenLabs, or any OpenAI-compatible server ── */
+  const loadVoiceCfg = () => (VOICES ? VOICES.normalizeConfig(secGet(LS.voicecfg, {})) : { tts: { engine: 'browser' }, stt: { engine: 'default' } });
+  let extPlayer = null;
+
+  function externalTts() {
+    if (!VOICES || voice.extFailed) return null;
+    const tts = VOICES.createTts(loadVoiceCfg().tts);
+    if (!tts) return null;
+    extPlayer = extPlayer || VOICES.createPlayer({});
+    return { tts, player: extPlayer };
+  }
+  function externalStt() {
+    if (!VOICES || voice.sttFailed) return null;
+    const c = loadVoiceCfg();
+    return VOICES.createStt(c.stt, c.tts);
+  }
+  function stopEngines() {
+    if (window.speechSynthesis) { try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ } }
+    if (extPlayer) extPlayer.stop();
+  }
+  /* Autoplay policies: one silent clip during a tap lets later sentences play. */
+  function unlockAudio() {
+    if (!AUDIO || !externalTts() || typeof Audio === 'undefined') return;
+    try {
+      const wav = AUDIO.encodeWav(new Float32Array(160), 16000);
+      const a = new Audio(URL.createObjectURL(new Blob([wav], { type: 'audio/wav' })));
+      const p = a.play(); if (p && p.catch) p.catch(() => {});
+    } catch (e) { /* not available */ }
+  }
+
+  function browserChunk(clean) {
     return new Promise((resolve) => {
-      const clean = speakableText(text);
-      if (!clean || !window.speechSynthesis || !voiceEnabled()) { resolve(false); return; }
+      if (!window.speechSynthesis) { resolve(false); return; }
       try {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(clean);
-        const lang = voice.lang;
-        utterance.lang = lang;
-        const chosen = voice.ttsVoice || pickVoice(lang);
-        if (chosen) utterance.voice = chosen;
-        // A touch quicker and brighter than the phone default: this is a
-        // 21-year-old chatting, not a narrator. Still easy to follow.
-        utterance.rate = 1.06;
-        utterance.pitch = 1.08;
-        utterance.volume = 1;
-        voice.speaking = true;
-        paintVoiceUi();
-        utterance.onend = () => { voice.speaking = false; paintVoiceUi(); resolve(true); };
-        utterance.onerror = () => { voice.speaking = false; paintVoiceUi(); resolve(false); };
-        window.speechSynthesis.speak(utterance);
-      } catch (error) {
-        voice.speaking = false;
-        paintVoiceUi();
-        resolve(false);
-      }
+        const u = makeUtterance(clean);
+        u.onend = () => resolve(true); u.onerror = () => resolve(false);
+        window.speechSynthesis.speak(u);
+      } catch (e) { resolve(false); }
     });
   }
 
-  function stopSpeaking() {
-    if (window.speechSynthesis) {
-      try { window.speechSynthesis.cancel(); } catch (error) { /* ignore */ }
+  /* One sentence, through whichever engine is chosen. A failing paid/remote
+     engine never leaves her silent: it explains once and the phone voice takes over. */
+  function speakChunk(clean) {
+    const ext = externalTts();
+    if (!ext) return browserChunk(clean);
+    return new Promise((resolve) => {
+      ext.player.enqueue(ext.tts.synth(clean), {
+        onEnd: (error) => {
+          if (!error) { resolve(true); return; }
+          if (!voice.extFailed) toast(error.message + ' — phone ki awaaz par laut rahi hoon', true);
+          voice.extFailed = true;
+          ext.player.whenIdle().then(() => browserChunk(clean)).then(resolve);
+        }
+      });
+    });
+  }
+
+  function makeUtterance(clean) {
+    const utterance = new SpeechSynthesisUtterance(clean);
+    utterance.lang = voice.lang;
+    const chosen = voice.ttsVoice || pickVoice(voice.lang);
+    if (chosen) utterance.voice = chosen;
+    utterance.rate = 1.06;
+    utterance.pitch = 1.08;
+    utterance.volume = 1;
+    return utterance;
+  }
+
+  /* Speaks a reply while it is still being written: complete sentences are
+     queued on the speech engine as they arrive, so the first words are heard
+     after one sentence, not after the whole answer. Memory tags are never read. */
+  function createSpeaker() {
+    let buf = '', cut = false, pendingCount = 0, spokenCount = 0, closed = false, waiter = null;
+    const settle = () => { if (closed && pendingCount === 0 && waiter) { const w = waiter; waiter = null; w(); } };
+    function say(raw) {
+      const clean = speakableText(raw);
+      if (!clean || !voiceEnabled() || (!window.speechSynthesis && !externalTts())) return;
+      pendingCount += 1; spokenCount += 1;
+      voice.speaking = true; voice.saying = (voice.saying + ' ' + clean).slice(-1200); paintVoiceUi(); onSpeakingChanged(true);
+      const end = () => { pendingCount -= 1; if (pendingCount <= 0) { voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false); } settle(); };
+      speakChunk(clean).then(end, end);
     }
+    function drain(final) {
+      for (;;) {
+        const m = buf.match(/^[\s\S]*?[.!?।\n](?=\s|$)/);
+        let take = m && (m[0].trim().length >= 24 || final || /[\n।]$/.test(m[0])) ? m[0] : '';
+        if (!take && buf.length > 160) { const i = buf.lastIndexOf(',', 150); take = buf.slice(0, i > 40 ? i + 1 : 150); }
+        if (!take) break;
+        buf = buf.slice(take.length);
+        say(take);
+      }
+      if (final && buf.trim()) { say(buf); buf = ''; }
+    }
+    return {
+      push(chunk) {
+        if (cut || closed) return;
+        buf += chunk;
+        const i = buf.indexOf('[[');
+        if (i >= 0) { buf = buf.slice(0, i); cut = true; }
+        drain(cut);
+      },
+      mute() { cut = true; buf = ''; },
+      reset() { buf = ''; cut = false; stopEngines(); pendingCount = 0; spokenCount = 0; },
+      spoken: () => spokenCount > 0,
+      finish() {
+        closed = true; drain(true);
+        if (pendingCount === 0) return Promise.resolve();
+        return new Promise((resolve) => { waiter = resolve; setTimeout(resolve, 60000); });
+      }
+    };
+  }
+
+  function speak(text) {
+    const clean = speakableText(text);
+    if (!clean || !voiceEnabled() || (!window.speechSynthesis && !externalTts())) return Promise.resolve(false);
+    stopEngines();
+    voice.speaking = true;
+    voice.saying = clean;
+    paintVoiceUi();
+    onSpeakingChanged(true);
+    // A touch quicker and brighter than the phone default (see makeUtterance): a
+    // 21-year-old chatting, not a narrator.
+    return speakChunk(clean).then((ok) => { voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false); return ok; });
+  }
+
+  function stopSpeaking() {
+    stopEngines();
     voice.speaking = false;
     paintVoiceUi();
   }
@@ -1014,7 +1595,7 @@
   function listenOnce() {
     if (!voice.mode || voice.speaking || state.busy) return;
     const Ctor = speechRecognitionCtor();
-    if (!Ctor) { fallbackRecording(); return; }
+    if (!Ctor || externalStt()) { fallbackRecording(); return; }
     try {
       if (!voice.recognition) voice.recognition = buildRecognition();
       voice.recognition.lang = voice.lang;
@@ -1041,6 +1622,73 @@
     stopListening();
     setTimeout(() => { voice.stopping = false; }, 120);
   }
+
+
+  /* ── "Hey Jenni" (wake word) and talking over her (barge-in) ───────────────
+     Both use the browser's own speech recognition, so they work only while the
+     page is open and visible — a browser limit, not a choice. Barge-in is off by
+     default: without headphones the phone can hear itself. */
+  const WAKE_RE = /(?:\b(?:hey|hi|hello|ok|okay|arre|are|oye)\s+)?\b(jenni|jenny|jennie|jeni|jenie|जेनी|जेन्नी|जेनि)\b[\s,.!?]*/i;
+  const wakeOn = () => localStorage.getItem('jenni_wake_on') === '1';
+  const bargeOn = () => localStorage.getItem('jenni_barge_on') === '1';
+
+  function startWake() {
+    if (!wakeOn() || voice.mode || voice.wake || document.hidden || !voiceEnabled() || !state.cfg || !state.cfg.apiKey) return;
+    const Ctor = speechRecognitionCtor();
+    if (!Ctor) return;
+    const r = new Ctor();
+    r.lang = voice.lang; r.continuous = true; r.interimResults = true;
+    r.onresult = (ev) => {
+      for (let i = ev.resultIndex; i < ev.results.length; i += 1) {
+        const text = ev.results[i][0].transcript;
+        const m = text.match(WAKE_RE);
+        if (!m || now() - voice.lastWake < 2500) continue;
+        const rest = text.slice(m.index + m[0].length).trim();
+        if (rest && !ev.results[i].isFinal) return;            // wait until the sentence is complete
+        voice.lastWake = now();
+        stopWake();
+        startVoiceMode();
+        if (rest && rest.split(/\s+/).length >= 2) handleVoiceInput(rest);
+        return;
+      }
+    };
+    r.onend = () => { if (voice.wake === r) { voice.wake = null; if (wakeOn() && !voice.mode && !document.hidden) setTimeout(startWake, 700); } };
+    r.onerror = (e) => {
+      if (voice.wake === r) voice.wake = null;
+      if (e && /not-allowed|service-not-allowed/.test(e.error)) { localStorage.setItem('jenni_wake_on', '0'); toast('Mic permission chahiye — Hey Jenni band', true); }
+    };
+    voice.wake = r;
+    try { r.start(); } catch (e) { voice.wake = null; }
+  }
+  function stopWake() {
+    const r = voice.wake; voice.wake = null;
+    if (r) { r.onend = null; r.onerror = null; try { r.abort(); } catch (e) { /* ignore */ } }
+  }
+
+  function startBarge() {
+    if (!bargeOn() || !voice.mode || voice.barge || !MEM) return;
+    const Ctor = speechRecognitionCtor();
+    if (!Ctor) return;
+    const r = new Ctor();
+    r.lang = voice.lang; r.continuous = true; r.interimResults = true;
+    r.onresult = (ev) => {
+      let text = '', final = false;
+      for (let i = ev.resultIndex; i < ev.results.length; i += 1) { text += ev.results[i][0].transcript; final = final || ev.results[i].isFinal; }
+      const words = text.trim().split(/\s+/).filter(Boolean);
+      if (words.length < 3 || MEM.overlap(text, voice.saying) >= 0.5) return;      // too short, or just her own voice
+      if (voice.speaking) { if (voice.activeSpeaker) voice.activeSpeaker.mute(); stopSpeaking(); }
+      if (final) { stopBarge(); handleVoiceInput(text); }
+    };
+    r.onend = () => { if (voice.barge === r) voice.barge = null; };
+    r.onerror = () => { if (voice.barge === r) voice.barge = null; };
+    voice.barge = r;
+    try { r.start(); } catch (e) { voice.barge = null; }
+  }
+  function stopBarge() {
+    const r = voice.barge; voice.barge = null;
+    if (r) { r.onend = null; r.onerror = null; try { r.abort(); } catch (e) { /* ignore */ } }
+  }
+  function onSpeakingChanged(on) { if (on) startBarge(); else stopBarge(); }
 
   /* ── fallback: record audio when the browser has no speech recognition ─── */
 
@@ -1078,9 +1726,26 @@
       voice.recorder = recorder;
       recorder.start();
       clearTimeout(voice.recordingTimer);
+      let capMs = 6000;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (AUDIO && Ctx && Ctx.prototype && Ctx.prototype.createAnalyser) {
+        // stop when the owner stops talking, not after a fixed timer
+        try {
+          voice.audioCtx = voice.audioCtx || new Ctx();
+          const src = voice.audioCtx.createMediaStreamSource(stream);
+          const analyser = voice.audioCtx.createAnalyser(); analyser.fftSize = 1024; src.connect(analyser);
+          const buf = new Uint8Array(analyser.fftSize), vad = AUDIO.createVad(), t0 = now();
+          const poll = setInterval(() => {
+            analyser.getByteTimeDomainData(buf);
+            if (recorder.state !== 'recording') { clearInterval(poll); return; }
+            if (vad.feed(AUDIO.rmsOf(buf), now() - t0) === 'done') { clearInterval(poll); recorder.stop(); }
+          }, 100);
+          capMs = 16000;
+        } catch (e) { /* analyser unavailable: the fixed timer below still ends the recording */ }
+      }
       voice.recordingTimer = setTimeout(() => {
         if (recorder.state === 'recording') recorder.stop();
-      }, 6000);
+      }, capMs);
     } catch (error) {
       voice.listening = false;
       voice.mode = false;
@@ -1089,8 +1754,31 @@
     }
   }
 
+  /* Providers with no /audio/transcriptions (Gemini) can still hear: the
+     recording goes through the chat endpoint as WAV and comes back as text. */
+  async function transcribeViaChat(blob) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!AUDIO || !Ctx) throw new Error('Is browser me awaaz decode nahi ho paati — Chrome par kholo.');
+    voice.audioCtx = voice.audioCtx || new Ctx();
+    const wav = await AUDIO.blobToWav(blob, voice.audioCtx);
+    if (wav.seconds < 0.4) return '';
+    const lang = voice.lang.startsWith('hi') ? 'Hindi / Hinglish' : 'English';
+    const text = await callProvider([{ role: 'user', content: [
+      { type: 'text', text: `Transcribe this audio exactly as spoken (${lang}). Keep the speaker's own language, and Roman letters if they spoke Hinglish. Output only the transcript. If there is no clear speech, output exactly: [silence]` },
+      { type: 'input_audio', input_audio: { data: wav.base64, format: wav.format } }
+    ] }], { maxTokens: 300, temperature: 0 });
+    const out = String(text).trim();
+    return /^\[?\s*silence\s*\]?\.?$/i.test(out) ? '' : out.replace(/^["'“]|["'”]$/g, '');
+  }
+
   async function transcribeWithProvider(blob) {
     const cfg = state.cfg;
+    const ext = externalStt();
+    if (ext) {
+      try { return await ext.transcribe(blob, { lang: voice.lang }); }
+      catch (error) { voice.sttFailed = true; throw new Error(error.message + ' — ab default sunne wala tareeka chalega.'); }
+    }
+    if (cfg && (cfg.transcribe === 'chat' || (!cfg.transcribe && isGemini(cfg)))) return transcribeViaChat(blob);
     if (!cfg || !cfg.transcribe) {
       throw new Error('Voice samajhne ke liye "Voice-to-text model" Setup me bharna hoga (jaise whisper-1).');
     }
@@ -1179,7 +1867,9 @@
       setResult('setupResult', 'Voice mode ke liye pehle API key save karo.', 'error');
       return;
     }
+    stopWake();
     stopSpeaking();
+    unlockAudio();
     voice.mode = true;
     voice.lastHandled = '';
     localStorage.setItem('jenni_voice_auto', '1');
@@ -1199,7 +1889,9 @@
     releaseWakeLock();
     setTranscript('', false);
     paintVoiceUi();
+    stopBarge();
     if (!silent) toast('Voice mode band');
+    setTimeout(startWake, 900);
   }
 
   function toggleVoiceMode() {
@@ -1271,19 +1963,273 @@
 
   /* ══════════════════════════════════════════════════════════════ DRAFTS */
 
-  function saveDraft(text) {
+  function saveDraft(text, quiet) {
     const title = String(text).split('\n')[0].replace(/[#*_`>]/g, '').trim().slice(0, 60) || 'Draft';
     state.drafts.unshift({ id: String(now()), title, text, at: new Date().toISOString() });
     state.drafts = state.drafts.slice(0, 200);
     persist('drafts');
     paintDrafts();
-    toast('Draft save ho gaya');
+    if (!quiet) toast('Draft save ho gaya');
   }
 
-  function paintMemory() {
-    const host = $('memoryList');
+
+  /* ── companion: suggestions before she is asked ─────────────────────────── */
+  const suggestState = { events: [], at: 0 };
+  const dismissedToday = () => { const v = readJson('jenni_sugg_v1', {}); return v.day === todayIso() ? v.ids || [] : []; };
+  async function refreshEvents() {
+    if (!googleReady() || now() - suggestState.at < 30 * 60000) return;
+    suggestState.at = now();
+    try { suggestState.events = await googleClient().events(1, now()); } catch (e) { suggestState.events = []; }
+  }
+  function paintSuggestions() {
+    const host = $('suggestStrip');
+    if (!host || !PRO || !BRAIN) return;
+    if (security.enabled && !security.dataKey) { host.hidden = true; return; }
+    const list = PRO.suggest({ notes: state.notes, wins: secGet(LS.wins, []), events: suggestState.events, activity: secGet(LS.activity, {}), dismissed: dismissedToday(), nowMs: now(), name: BRAIN.OWNER.name.split(' ')[0] });
+    host.textContent = '';
+    host.hidden = !list.length;
+    list.forEach((sug) => {
+      const chip = document.createElement('div'); chip.className = 'suggest__chip';
+      const txt = document.createElement('span'); txt.textContent = sug.text;
+      const go = document.createElement('button'); go.type = 'button'; go.className = 'suggest__go'; go.textContent = 'Haan';
+      const no = document.createElement('button'); no.type = 'button'; no.setAttribute('aria-label', 'Dismiss'); no.textContent = '✕';
+      go.addEventListener('click', () => { dismissSuggestion(sug.id); runSuggestion(sug.action); });
+      no.addEventListener('click', () => dismissSuggestion(sug.id));
+      chip.append(txt, go, no); host.appendChild(chip);
+    });
+  }
+  function dismissSuggestion(id) {
+    writeJson('jenni_sugg_v1', { day: todayIso(), ids: dismissedToday().concat(id) });
+    paintSuggestions();
+  }
+  function runSuggestion(action) {
+    if (!action) return;
+    if (action.type === 'chat') { send(action.text); return; }
+    if (action.type === 'office') {
+      openSheet('office');
+      $('offType').value = action.doc; renderOfficeFields();
+      if (action.subject && $('off_subject')) $('off_subject').value = action.subject;
+    }
+  }
+
+  /* once a day: old, unreinforced facts fade; decayed ones stop reaching prompts */
+  function dailyHygiene() {
+    if (!MEM || !memory) return;
+    const day = todayIso();
+    if (localStorage.getItem('jenni_decay_day') === day) return;
+    localStorage.setItem('jenni_decay_day', day);
+    const facts = memory.all();
+    const decayed = MEM.decayFacts(facts, now());
+    if (JSON.stringify(decayed) !== JSON.stringify(facts)) secureStore.setItem(LS.memory, JSON.stringify(decayed));
+  }
+
+  /* ── agent mode: autonomy, audit trail, self-test ───────────────────────── */
+  function paintActionLog() {
+    const host = $('actionLog'); if (!host) return;
+    host.textContent = '';
+    secGet(LS.actions, []).slice(0, 12).forEach((a) => {
+      const row = document.createElement('div'); row.className = 'card';
+      row.textContent = `${new Date(a.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · ${a.tool} · ${a.decision}${a.ok ? '' : ' ✗'}`;
+      host.appendChild(row);
+    });
+    if (!host.children.length) host.innerHTML = '<p class="empty">Abhi koi tool-kaam nahi hua.</p>';
+  }
+
+  async function runSelfTest() {
+    if (!EVALS) return;
+    if (!state.cfg || !state.cfg.apiKey) { openSheet('setup'); return; }
+    const out = $('evalOut'), res = $('evalResult'); out.textContent = '';
+    $('btnEval').disabled = true;
+    try {
+      const report = await EVALS.run({
+        ask: (prompt) => askProvider(conversationForApi(prompt, { noHistory: true }), { maxTokens: 500 }),
+        verify: (t) => VERIFY.check(t, { udise: BRAIN.OWNER.udise }),
+        onProgress: (n, total) => setResult('evalResult', `Jaanch ho rahi hai… ${n}/${total}`, 'busy')
+      });
+      const hist = secGet(LS.evals, []);
+      const prev = hist[0];
+      secSet(LS.evals, [{ at: now(), model: state.cfg.model, pct: report.pct, passed: report.passed, total: report.total }].concat(hist).slice(0, 10));
+      const delta = prev ? (report.pct - prev.pct >= 0 ? '+' : '') + (report.pct - prev.pct) + '% pichhli baar se' : 'pehli jaanch';
+      setResult('evalResult', `${report.passed}/${report.total} sahi (${report.pct}%) — ${delta}`, report.pct >= 80 ? 'ok' : 'error');
+      report.results.filter((r) => !r.pass).forEach((r) => {
+        const row = document.createElement('div'); row.className = 'card';
+        row.textContent = `✗ ${r.id}: ${r.why} — ${r.failed.join(', ')}`;
+        out.appendChild(row);
+      });
+    } catch (error) { setResult('evalResult', plainError(error), 'error'); }
+    $('btnEval').disabled = false;
+  }
+
+  function wireAgentSettings() {
+    if ($('autonomySel')) {
+      $('autonomySel').value = localStorage.getItem(LS.autonomy) || 'smart';
+      $('autonomySel').addEventListener('change', (ev) => localStorage.setItem(LS.autonomy, ev.target.value));
+    }
+    if ($('wakeToggle')) {
+      $('wakeToggle').checked = wakeOn();
+      $('wakeToggle').addEventListener('change', (ev) => { localStorage.setItem('jenni_wake_on', ev.target.checked ? '1' : '0'); if (ev.target.checked) startWake(); else stopWake(); });
+      $('bargeToggle').checked = bargeOn();
+      $('bargeToggle').addEventListener('change', (ev) => localStorage.setItem('jenni_barge_on', ev.target.checked ? '1' : '0'));
+      document.addEventListener('visibilitychange', () => { if (document.hidden) stopWake(); else startWake(); });
+    }
+    if ($('btnEval')) $('btnEval').addEventListener('click', runSelfTest);
+    setInterval(() => { refreshEvents().then(paintSuggestions); }, 5 * 60000);
+  }
+
+
+  /* ── Setup: choose how Jenni speaks and listens ─────────────────────────── */
+  function paintVoiceEngineForm() {
+    if (!$('vTtsEngine')) return;
+    const c = loadVoiceCfg();
+    $('vTtsEngine').value = c.tts.engine; $('vKey').value = c.tts.key; $('vVoice').value = c.tts.voice;
+    $('vModel').value = c.tts.model; $('vBase').value = c.tts.base;
+    $('vSttEngine').value = c.stt.engine; $('vSttKey').value = c.stt.key; $('vSttBase').value = c.stt.base; $('vSttModel').value = c.stt.model;
+  }
+  function wireVoiceEngines() {
+    if (!$('vTtsEngine') || !VOICES) return;
+    paintVoiceEngineForm();
+    const say = (m, k) => setResult('vResult', m, k);
+    $('btnVoiceCfgSave').addEventListener('click', () => {
+      const raw = {
+        tts: { engine: $('vTtsEngine').value, key: $('vKey').value, voice: $('vVoice').value, model: $('vModel').value, base: $('vBase').value },
+        stt: { engine: $('vSttEngine').value, key: $('vSttKey').value, base: $('vSttBase').value, model: $('vSttModel').value }
+      };
+      const norm = VOICES.normalizeConfig(raw);
+      secSet(LS.voicecfg, norm);
+      voice.extFailed = false; voice.sttFailed = false;
+      const downgraded = (raw.tts.engine !== norm.tts.engine) || (raw.stt.engine !== norm.stt.engine);
+      say(downgraded ? 'Save hua, par kuch adhura tha (key/voice/https URL) — wahan phone ki awaaz rakhi hai.' : 'Save ho gaya. "Awaaz test" dabao.', downgraded ? 'error' : 'ok');
+      paintVoiceEngineForm();
+    });
+    $('btnVoicesLoad').addEventListener('click', async () => {
+      try {
+        say('Voices la rahi hoon…', 'busy');
+        const list = await VOICES.listElevenVoices($('vKey').value);
+        const sel = $('vVoiceList'); sel.textContent = '';
+        list.forEach((v) => { const o = document.createElement('option'); o.value = v.id; o.textContent = v.name + (v.hint ? ' (' + v.hint + ')' : ''); sel.appendChild(o); });
+        sel.hidden = !list.length;
+        if (list.length) $('vVoice').value = list[0].id;
+        say(list.length + ' voices mili — list se chuno, phir Save.', 'ok');
+      } catch (e) { say(e.message, 'error'); }
+    });
+    $('vVoiceList').addEventListener('change', (ev) => { $('vVoice').value = ev.target.value; });
+    $('btnVoiceCfgTest').addEventListener('click', async () => {
+      voice.extFailed = false;
+      if (!externalTts()) { say('Pehle engine, key aur voice bhar ke Save karo — abhi phone ki awaaz chalegi.', 'error'); speakSample(); return; }
+      unlockAudio();
+      say('Bol rahi hoon…', 'busy');
+      await speak('Namaste, main Jenni hoon. Ye meri nayi awaaz hai.');
+      say(voice.extFailed ? 'Ye engine chala nahi — upar ka sandesh dekho.' : 'Theek lagi? Isi se bolegi.', voice.extFailed ? 'error' : 'ok');
+    });
+  }
+
+  /* ── Office desk ───────────────────────────────────────────────────────── */
+  const OFFICE = window.JENNI_OFFICE;
+  const SCHOOL_FIELDS = [['name', 'School ka naam'], ['address', 'Pata'], ['affiliation', 'CBSE affiliation no.'], ['udise', 'UDISE'], ['principal', 'Principal / signatory'], ['designation', 'Pad'], ['place', 'Jagah']];
+  const officeState = { type: null, built: null };
+  const loadSchool = () => { try { return Object.assign({}, OFFICE.SCHOOL_DEFAULT, JSON.parse(secureStore.getItem(LS.school) || '{}')); } catch (e) { return Object.assign({}, OFFICE.SCHOOL_DEFAULT); } };
+  const saveSchool = (v) => secureStore.setItem(LS.school, JSON.stringify(v));
+
+  function renderOfficeFields() {
+    const type = OFFICE.TYPES.find((t) => t.id === $('offType').value) || OFFICE.TYPES[0];
+    officeState.type = type;
+    const host = $('offFields'); host.textContent = '';
+    type.fields.forEach((f) => {
+      const label = document.createElement('label'); label.className = 'label'; label.htmlFor = 'off_' + f.id; label.textContent = f.label + (f.req ? ' *' : '');
+      let input;
+      if (f.kind === 'area') { input = document.createElement('textarea'); input.rows = f.rows || 4; }
+      else if (f.kind === 'select') {
+        input = document.createElement('select');
+        f.options.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; input.appendChild(o); });
+      } else { input = document.createElement('input'); input.type = 'text'; }
+      input.className = 'field'; input.id = 'off_' + f.id;
+      if (f.value) input.value = f.value;
+      host.append(label, input);
+    });
+  }
+
+  function paintOffice() {
+    if (!OFFICE) return;
+    const sel = $('offType');
+    if (!sel.options.length) {
+      OFFICE.TYPES.forEach((t) => { const o = document.createElement('option'); o.value = t.id; o.textContent = t.label; sel.appendChild(o); });
+      renderOfficeFields();
+    }
+    const school = loadSchool(), host = $('schoolFields');
+    host.textContent = '';
+    SCHOOL_FIELDS.forEach(([k, label]) => {
+      const l = document.createElement('label'); l.className = 'label'; l.textContent = label;
+      const i = document.createElement('input'); i.className = 'field'; i.id = 'school_' + k; i.value = school[k] || '';
+      host.append(l, i);
+    });
+  }
+
+  function officeMake(typeId, values) {
+    const school = loadSchool();
+    const built = OFFICE.build(typeId, values, school, Date.now());
+    saveSchool(Object.assign(school, { counter: built.counter }));
+    officeState.built = built;
+    $('offOut').value = built.text;
+    return built;
+  }
+
+  function wireOffice() {
+    if (!OFFICE || !$('offType')) return;
+    $('offType').addEventListener('change', renderOfficeFields);
+    $('btnSchoolSave').addEventListener('click', () => {
+      const v = loadSchool();
+      SCHOOL_FIELDS.forEach(([k]) => { v[k] = $('school_' + k).value.trim(); });
+      saveSchool(v); toast('School profile save ho gayi');
+    });
+    $('btnOffMake').addEventListener('click', () => {
+      const type = officeState.type || OFFICE.TYPES[0];
+      const values = {};
+      for (const f of type.fields) {
+        values[f.id] = $('off_' + f.id).value;
+        if (f.req && !String(values[f.id]).trim()) { setResult('offResult', `"${f.label}" bharna zaroori hai.`, 'error'); return; }
+      }
+      const school = loadSchool();
+      if (!school.name) setResult('offResult', 'Tip: School profile bhar do to letterhead poora aayega.', 'busy');
+      else setResult('offResult', '', '');
+      try {
+        const built = officeMake(type.id, values);
+        const meta = built.meta;
+        const issues = meta ? meta.warnings.concat(meta.errors || []) : [];
+        if (issues.length) setResult('offResult', issues.slice(0, 3).join(' · '), 'error');
+        else if (school.name) setResult('offResult', 'Taiyar. Edit karo, phir Save/Download.', 'ok');
+      } catch (error) { setResult('offResult', error.message, 'error'); }
+    });
+    $('btnOffSave').addEventListener('click', () => { if ($('offOut').value.trim()) saveDraft($('offOut').value); });
+    $('btnOffCopy').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText($('offOut').value); toast('Copy ho gaya'); } catch (e) { toast('Copy nahi hua', true); }
+    });
+    $('btnOffDocx').addEventListener('click', () => {
+      const text = $('offOut').value.trim();
+      if (!text) return;
+      const title = (officeState.built && officeState.built.title) || 'Office document';
+      const built = DOCS.buildFile(title, text, 'docx');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(built.blob); a.download = built.name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    });
+    document.querySelectorAll('[data-polish]').forEach((btn) => btn.addEventListener('click', async () => {
+      const text = $('offOut').value.trim();
+      if (!text) return;
+      if (!state.cfg || !state.cfg.apiKey) { openSheet('setup'); return; }
+      setResult('offResult', 'Jenni sudhar rahi hai…', 'busy');
+      try {
+        const out = await askProvider([{ role: 'user', content: OFFICE.polishPrompt(text, btn.dataset.polish) }], { maxTokens: 1800, temperature: 0.3 });
+        $('offOut').value = out;
+        setResult('offResult', 'Ho gaya — padh ke check kar lo.', 'ok');
+      } catch (error) { setResult('offResult', plainError(error), 'error'); }
+    }));
+  }
+
+  function paintNotes() {
+    const host = $('notesList');
     if (!host || !BRAIN) return;
-    const list = loadMemory();
+    const list = loadNotes();
     host.textContent = '';
     if (!list.length) {
       const empty = document.createElement('p');
@@ -1297,14 +2243,14 @@
       const label = document.createElement('span');
       const st = BRAIN.taskState(m);
       label.textContent = m.cat === 'task'
-        ? (st === 'overdue' ? '⚠ ' : '☐ ') + m.text + (m.due ? ' — ' + m.due + (st === 'overdue' ? ' (overdue)' : st === 'today' ? ' (aaj)' : '') : '')
+        ? '☐ ' + m.text + (m.repeat ? ' ↻' : '') + (m.due ? ' — ' + m.due + (st === 'overdue' ? ' (pehle ka)' : st === 'today' ? ' (aaj)' : '') : '')
         : '[' + m.cat + '] ' + m.text;
       label.style.flex = '1';
       const del = document.createElement('button');
       del.type = 'button';
       del.className = 'btn btn--ghost';
       del.textContent = m.cat === 'task' ? 'Done ✓' : 'Delete';
-      del.addEventListener('click', () => saveMemory(loadMemory().filter((x) => x.id !== m.id)));
+      del.addEventListener('click', () => { if (m.cat === 'task' && MEM) completeNote(m.id); else { snapshot(); saveNotes(loadNotes().filter((x) => x.id !== m.id)); } });
       row.append(label, del);
       host.appendChild(row);
     });
@@ -1394,7 +2340,7 @@
       setResult('driveResult', 'Client ID .apps.googleusercontent.com par khatam hota hai.', 'error');
       return;
     }
-    state.drive = { clientId: value };
+    state.drive = Object.assign({}, state.drive, { clientId: value });
     writeJson(LS.drive, state.drive);
     paintDrive();
     setResult('driveResult', 'Client ID save ho gaya. Ab Connect Google dabao.', 'ok');
@@ -1407,10 +2353,10 @@
         try {
           const client = window.google.accounts.oauth2.initTokenClient({
             client_id: state.drive.clientId,
-            scope: DRIVE_SCOPE,
+            scope: GOOGLE ? GOOGLE.scopeString(Boolean(state.drive.extended)) : DRIVE_SCOPE,
             callback: (response) => {
               if (response && response.access_token) {
-                state.driveToken = { token: response.access_token, expires: now() + (Number(response.expires_in || 3600) - 60) * 1000 };
+                state.driveToken = { token: response.access_token, expires: now() + (Number(response.expires_in || 3600) - 60) * 1000, scoped: Boolean(state.drive.extended) };
                 writeJson(LS.driveToken, state.driveToken);
                 resolve(state.driveToken.token);
               } else {
@@ -1419,7 +2365,7 @@
             },
             error_callback: (error) => reject(new Error((error && error.message) || 'Google connect nahi hua.'))
           });
-          client.requestAccessToken({ prompt: state.driveToken ? '' : 'consent' });
+          client.requestAccessToken({ prompt: state.driveToken && state.driveToken.scoped === Boolean(state.drive.extended) ? '' : 'consent' });
         } catch (error) {
           reject(error);
         }
@@ -1729,20 +2675,27 @@
 
   /* ══════════════════════════════════════════════════════════════ EXPORT */
 
-  function exportData() {
-    /* Everything that took time to build goes in the backup — the key never
-       does. Memory, learned playbooks and the journal are the expensive part. */
-    const data = {
+  function collectBackup() {
+    /* Everything that took time to build goes in the backup — the key never does. */
+    return {
       drafts: state.drafts,
       config: state.cfg ? { ...state.cfg, apiKey: '' } : null,
       drive: state.drive,
+      notes: state.notes,
       memory: memory ? memory.all() : [],
       skills: skills ? skills.custom() : [],
       episodes: journal ? journal.episodes() : [],
       insights: journal ? journal.insights() : [],
+      school: secGet(LS.school, {}),
+      wins: secGet(LS.wins, []),
+      activity: secGet(LS.activity, {}),
+      packs: loadPacks(),
       at: new Date().toISOString()
     };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  }
+
+  function exportData() {
+    const blob = new Blob([JSON.stringify(collectBackup(), null, 2)], { type: 'application/json' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = 'jenni-backup-' + new Date().toISOString().slice(0, 10) + '.json';
@@ -1751,35 +2704,61 @@
     toast('Backup download ho gaya (key shaamil nahi hai)');
   }
 
+  /* Merge, never replace: a restore on a phone that already learned things must
+     not throw the newer learning away. Returns how many things came back. */
+  function applyBackup(data) {
+    let restored = 0;
+    if (Array.isArray(data.drafts)) {
+      const known = new Set(state.drafts.map((d) => d.id));
+      const fresh = data.drafts.filter((d) => d && d.id && !known.has(d.id));
+      state.drafts = [...fresh, ...state.drafts];
+      restored += fresh.length;
+      persist('drafts');
+      paintDrafts();
+    }
+    const merge = (key, incoming, idOf) => {
+      if (!Array.isArray(incoming) || !incoming.length) return 0;
+      let existing = [];
+      try { existing = JSON.parse(secureStore.getItem(key) || '[]'); } catch (error) { existing = []; }
+      if (!Array.isArray(existing)) existing = [];
+      const seen = new Set(existing.map(idOf));
+      const fresh = incoming.filter((item) => item && !seen.has(idOf(item)));
+      if (!fresh.length) return 0;
+      secureStore.setItem(key, JSON.stringify(fresh.concat(existing)));
+      return fresh.length;
+    };
+    restored += merge(LS.memory, data.memory, (fact) => String(fact.text || '').toLowerCase())
+      + merge(LS.skills, data.skills, (skill) => String(skill.name || '').toLowerCase())
+      + merge(LS.episodes, data.episodes, (episode) => episode.id)
+      + merge(LS.insights, data.insights, (insight) => String(insight.text || '').toLowerCase())
+      + merge(LS.wins, data.wins, (w) => w.at + w.text);
+    if (Array.isArray(data.notes) && BRAIN) {
+      let list = state.notes;
+      const before = list.length;
+      data.notes.slice(0, 200).forEach((n) => {
+        const due = n && /^\d{4}-\d{2}-\d{2}$/.test(n.due || '') ? n.due : '';
+        const next = BRAIN.addMemory(list, n && n.text, n && n.cat, n && n.ts, due);   // untrusted: re-validated
+        if (next !== list && n.repeat && ['daily', 'weekly', 'monthly'].includes(n.repeat)) { const t = next[next.length - 1]; t.repeat = n.repeat; if (Number.isInteger(n.weekday)) t.weekday = n.weekday; t.rc = 1; }
+        list = next;
+      });
+      restored += list.length - before;
+      saveNotes(list);
+    }
+    if (data.school && typeof data.school === 'object' && !loadSchool().name && data.school.name) saveSchool(Object.assign(loadSchool(), data.school));
+    if (data.activity && typeof data.activity === 'object') {
+      const mine = secGet(LS.activity, {});
+      Object.keys(data.activity).forEach((k) => { if (Array.isArray(data.activity[k])) mine[k] = Array.from(new Set((mine[k] || []).concat(data.activity[k]))).sort().slice(-24); });
+      secSet(LS.activity, mine);
+    }
+    paintMemory();
+    return restored;
+  }
+
   function importData(file) {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const data = JSON.parse(reader.result);
-        if (Array.isArray(data.drafts)) {
-          const known = new Set(state.drafts.map((d) => d.id));
-          state.drafts = [...data.drafts.filter((d) => d && d.id && !known.has(d.id)), ...state.drafts];
-          persist('drafts');
-          paintDrafts();
-        }
-        /* Merge, never replace: a restore on a phone that already learned
-           things must not throw the newer learning away. */
-        const merge = (key, incoming, idOf) => {
-          if (!Array.isArray(incoming) || !incoming.length) return 0;
-          let existing = [];
-          try { existing = JSON.parse(localStorage.getItem(key) || '[]'); } catch (error) { existing = []; }
-          if (!Array.isArray(existing)) existing = [];
-          const seen = new Set(existing.map(idOf));
-          const fresh = incoming.filter((item) => item && !seen.has(idOf(item)));
-          if (!fresh.length) return 0;
-          localStorage.setItem(key, JSON.stringify(fresh.concat(existing)));
-          return fresh.length;
-        };
-        const restored = merge(LS.memory, data.memory, (fact) => String(fact.text || '').toLowerCase())
-          + merge(LS.skills, data.skills, (skill) => String(skill.name || '').toLowerCase())
-          + merge(LS.episodes, data.episodes, (episode) => episode.id)
-          + merge(LS.insights, data.insights, (insight) => String(insight.text || '').toLowerCase());
-        paintMemory();
+        const restored = applyBackup(JSON.parse(reader.result));
         toast(restored ? `Import ho gaya — ${restored} cheez wapas aayi` : 'Import ho gaya');
       } catch (error) {
         toast('File padhi nahi ja saki.', true);
@@ -1788,9 +2767,91 @@
     reader.readAsText(file);
   }
 
+  /* ── Drive backup: encrypted, one file, restorable on a new phone ───────── */
+  const BACKUP_NAME = 'jenni-backup.json';
+  const hashOf = (text) => { let h = 5381; for (let i = 0; i < text.length; i += 1) h = ((h << 5) + h + text.charCodeAt(i)) | 0; return String(h); };
+  const driveTokenNow = () => (state.driveToken && state.driveToken.expires > now() ? state.driveToken.token : null);
+
+  function backupPassphrase(ask) {
+    if (security.enabled && security.pin) return security.pin;
+    if (state.backupPass) return state.backupPass;
+    if (!ask) return null;
+    const typed = window.prompt('Backup passphrase (ise yaad rakhna — naye phone par restore ke liye chahiye)');
+    if (typed && typed.length >= 4) { state.backupPass = typed; return typed; }
+    return null;
+  }
+
+  async function findBackupFile(token) {
+    const q = encodeURIComponent(`name='${BACKUP_NAME}' and trashed=false`);
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&pageSize=5`, { headers: { Authorization: `Bearer ${token}` } });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((body && body.error && body.error.message) || `Drive HTTP ${res.status}`);
+    return ((body && body.files) || []).find((f) => f.name === BACKUP_NAME) || null;
+  }
+
+  async function backupToDrive({ silent } = {}) {
+    if (!driveReady()) { if (!silent) toast('Pehle Drive connect karo.', true); return false; }
+    const pass = backupPassphrase(!silent);
+    if (!pass) return false;
+    const token = silent ? driveTokenNow() : await driveTokenOrAsk();
+    if (!token) return false;
+    const data = collectBackup();
+    const fingerprint = hashOf(JSON.stringify(Object.assign({}, data, { at: '' })));
+    const sealed = await SEC.seal(pass, JSON.stringify(data));
+    const existing = await findBackupFile(token);
+    const boundary = 'jenni' + now();
+    const meta = existing ? {} : { name: BACKUP_NAME };
+    const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(sealed)}\r\n--${boundary}--`;
+    const url = existing
+      ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart&fields=id,modifiedTime`
+      : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime';
+    const res = await fetch(url, { method: existing ? 'PATCH' : 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+    if (!res.ok) throw new Error(`Backup fail (HTTP ${res.status}).`);
+    writeJson(LS.backup, { at: now(), hash: fingerprint });
+    paintBackupStatus();
+    if (!silent) toast('Drive par encrypted backup ho gaya');
+    return true;
+  }
+
+  async function restoreFromDrive() {
+    if (!driveReady()) { toast('Pehle Drive connect karo.', true); return; }
+    const token = await driveTokenOrAsk();
+    const file = await findBackupFile(token);
+    if (!file) { toast('Drive me jenni-backup.json nahi mila.', true); return; }
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`Backup padh nahi paye (HTTP ${res.status}).`);
+    const sealed = await res.json();
+    let pass = backupPassphrase(false), plain = null;
+    for (let attempt = 0; attempt < 2 && plain === null; attempt += 1) {
+      if (!pass) { pass = window.prompt('Backup passphrase daalo'); if (!pass) return; }
+      try { plain = await SEC.open(pass, sealed); } catch (error) { pass = null; if (attempt === 1) throw new Error('Passphrase galat hai.'); }
+    }
+    const restored = applyBackup(JSON.parse(plain));
+    toast(restored ? `Restore ho gaya — ${restored} cheez wapas aayi` : 'Restore ho gaya (kuch naya nahi tha)');
+  }
+
+  function paintBackupStatus() {
+    const el = $('backupStatus');
+    if (!el) return;
+    const info = readJson(LS.backup, null);
+    el.textContent = info ? 'Last backup: ' + new Date(info.at).toLocaleString('en-IN') : 'Abhi tak koi backup nahi.';
+  }
+
+  /* quietly, at most once a day, when nothing needs a prompt */
+  async function maybeAutoBackup() {
+    try {
+      if (!driveReady() || !driveTokenNow() || !backupPassphrase(false)) return;
+      const info = readJson(LS.backup, null);
+      if (info && now() - info.at < 20 * 3600 * 1000) return;
+      const fingerprint = hashOf(JSON.stringify(Object.assign({}, collectBackup(), { at: '' })));
+      if (info && info.hash === fingerprint) return;
+      await backupToDrive({ silent: true });
+    } catch (error) { /* a failed background backup must never bother the owner */ }
+  }
+
   /* ══════════════════════════════════════════════════════════════ SHEETS */
 
-  const ROUTES = ['chat', 'voice', 'drafts', 'drive', 'setup'];
+  const ROUTES = ['chat', 'voice', 'office', 'drafts', 'drive', 'setup'];
 
   function openSheet(name, options = {}) {
     closeSheets({ keepMemory: true });
@@ -1800,8 +2861,10 @@
     sheet.hidden = false;
     document.body.style.overflow = 'hidden';
     if (name === 'drafts') paintDrafts();
-    if (name === 'drive') { paintDrive(); listDriveFiles(); }
+    if (name === 'drive') { paintDrive(); listDriveFiles(); paintBackupStatus(); }
     if (name === 'setup') fillSetupForm();
+    if (name === 'office') paintOffice();
+    if (name === 'setup') { paintActionLog(); paintNotes(); paintVoiceEngineForm(); }
     rememberScreen(name);
     if (!options.silent) setHash(name);
     paintTabs();
@@ -1951,8 +3014,9 @@
     if (!security.enabled) return false;
     forgetSecret();
     security.dataKey = null;
-    state.chat = []; state.drafts = []; state.memory = [];
-    paintChat(); paintDrafts(); paintMemory();
+    vault.clear();
+    state.chat = []; state.drafts = []; state.notes = [];
+    paintChat(); paintDrafts(); paintNotes(); paintMemory();
     $('app').hidden = true;
     $('gate').hidden = true;
     $('lockScreen').hidden = false;
@@ -1968,7 +3032,9 @@
     state.cfg = cfg;                       // memory only: the key is never written back in plaintext
     await initDataKey(pin);
     await hydrate();
-    paintMemory();
+    paintNotes(); paintMemory();
+    syncReminders();
+    paintSuggestions();
     $('lockScreen').hidden = true;
     $('gate').hidden = true;
     $('app').hidden = false;
@@ -2094,7 +3160,8 @@
 
     const digest = digestChat();
     state.chat = [];
-    writeJson(LS.chat, []);
+    persist('chat');
+    secSet(LS.summary, '');
     paintChat();
     paintMemory();
 
@@ -2331,9 +3398,13 @@
     const cfg = await openVault(pin);
     await initDataKey(pin);
     await hydrate();                       // make sure the decrypted data is in memory first
+    await flushVault();
     security.enabled = false;
-    await persistAll();                    // back to plaintext (user's choice)
-    ['chat', 'drafts', 'memory'].forEach((n) => localStorage.removeItem(LS[n] + '_enc'));
+    SECURE_KEYS.forEach((key) => {                    // back to plaintext (user's choice)
+      if (vault.has(key)) localStorage.setItem(key, vault.get(key));
+      localStorage.removeItem(key + '_enc');
+    });
+    vault.clear();
     localStorage.removeItem(LS.dk);
     security.dataKey = null;
     localStorage.setItem(LS.config, JSON.stringify(cfg));
@@ -2347,6 +3418,7 @@
   /* ── panic ─────────────────────────────────────────────────────────────── */
 
   function panicWipe() {
+    try { if (RSTORE && window.indexedDB) RSTORE.clear(); } catch (e) { /* ignore */ }
     const keys = new Set(ALL_KEYS);
     try {
       Object.keys(localStorage).forEach((key) => {
@@ -2630,7 +3702,7 @@
     if (!BRAIN) return;
     const day = new Date().toISOString().slice(0, 10);
     try { if (localStorage.getItem('jenni_brief_day') === day) return; } catch (e) { return; }
-    const text = BRAIN.briefing(loadMemory());
+    const text = BRAIN.briefing(loadNotes());
     try { localStorage.setItem('jenni_brief_day', day); } catch (e) { /* ignore */ }
     if (text) { state.chat.push({ role: 'jenni', text }); persist('chat'); }
   }
@@ -2641,6 +3713,11 @@
     const cfg = state.cfg;
     setStatus(cfg && cfg.apiKey ? 'ok' : '', cfg && cfg.apiKey ? providerName() + ' · ' + cfg.model : 'setup needed');
     maybeBrief();
+    dailyHygiene();
+    refreshEvents().then(paintSuggestions);
+    paintSuggestions();
+    startWake();
+    setTimeout(maybeAutoBackup, 4000);
     paintChat();
     paintDrive();
     paintDrafts();
@@ -2786,9 +3863,9 @@
         const nm = nmClient();
         if (!nm) { say('Pehle NeverMind connect karo.', 'error'); return; }
         try {
-          let list = loadMemory(); const before = list.length;
+          let list = loadNotes(); const before = list.length;
           (await nm.memories()).slice(0, 30).forEach((t) => { list = BRAIN.addMemory(list, 'NeverMind: ' + t, 'school'); });
-          saveMemory(list); say((list.length - before) + ' nayi memory aayi.', 'ok');
+          saveNotes(list); say((list.length - before) + ' nayi memory aayi.', 'ok');
         } catch (error) { say(error.message, 'error'); }
       });
       const paintPacks = () => {
@@ -2818,33 +3895,24 @@
       });
       paintPacks();
     }
+    if ($('remindToggle')) {
+      $('remindToggle').checked = remindOn() && 'Notification' in window && Notification.permission === 'granted';
+      $('remindToggle').addEventListener('change', async (ev) => { ev.target.checked = await setReminders(ev.target.checked); });
+      setInterval(remindTick, 60000);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') remindTick(); });
+    }
+    wireOffice();
+    wireAgentSettings();
+    wireVoiceEngines();
     if ($('btnMemAdd') && BRAIN) {
       $('btnMemAdd').addEventListener('click', () => {
         const box = $('memInput');
         if (!box.value.trim()) return;
         const cmd = BRAIN.userCommand(box.value);
-        saveMemory(cmd ? BRAIN.applyOps(loadMemory(), [cmd]) : BRAIN.addMemory(loadMemory(), box.value, null));
+        saveNotes(cmd ? BRAIN.applyOps(loadNotes(), [cmd]) : BRAIN.addMemory(loadNotes(), box.value, null));
         box.value = '';
       });
-      $('btnMemExport').addEventListener('click', () => {
-        const blob = new Blob([JSON.stringify({ app: 'jenni', v: 1, memory: loadMemory(), packs: loadPacks() }, null, 2)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob); a.download = 'jenni-memory-' + new Date().toISOString().slice(0, 10) + '.json';
-        document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-      });
-      $('btnMemImport').addEventListener('click', () => $('memFile').click());
-      $('memFile').addEventListener('change', async (ev) => {
-        try {
-          const data = JSON.parse(await ev.target.files[0].text());
-          let list = loadMemory(); const before = list.length;
-          (Array.isArray(data.memory) ? data.memory : []).slice(0, 200).forEach((m) => {
-            list = BRAIN.addMemory(list, m && m.text, m && m.cat, m && m.ts, m && m.due && /^\d{4}-\d{2}-\d{2}$/.test(m.due) ? m.due : '');   // re-validated: imports are untrusted
-          });
-          saveMemory(list); toast((list.length - before) + ' memory import hui', false);
-        } catch (error) { toast('File padhi nahi ja saki', true); }
-        ev.target.value = '';
-      });
-      $('btnMemClear').addEventListener('click', () => { if (confirm('Saari memory delete karein?')) saveMemory([]); });
+      $('btnMemClear').addEventListener('click', () => { if (confirm('Saari memory delete karein?')) saveNotes([]); });
       paintMemory();
     }
 
@@ -3051,6 +4119,19 @@
     /* drive */
     $('btnDriveSave').addEventListener('click', saveClientId);
     $('btnDriveConnect').addEventListener('click', connectDrive);
+    if ($('googleExtended')) {
+      $('googleExtended').checked = Boolean(state.drive && state.drive.extended);
+      $('googleExtended').addEventListener('change', (ev) => {
+        state.drive = Object.assign({}, state.drive, { extended: ev.target.checked });
+        writeJson(LS.drive, state.drive);
+        state.driveToken = null; localStorage.removeItem(LS.driveToken);      // new scopes need a fresh consent
+        paintDrive();
+        setResult('driveResult', ev.target.checked ? 'Calendar + Gmail (read, draft only) ON — ab Connect Google dabao.' : 'Sirf Drive access.', 'ok');
+      });
+      $('btnBackupNow').addEventListener('click', async () => { try { await backupToDrive(); } catch (e) { toast(e.message, true); } });
+      $('btnRestore').addEventListener('click', async () => { try { await restoreFromDrive(); } catch (e) { toast(e.message, true); } });
+      paintBackupStatus();
+    }
     $('btnDriveOff').addEventListener('click', disconnectDrive);
     $('btnDriveRefresh').addEventListener('click', listDriveFiles);
     $('btnDrivePaste').addEventListener('click', pasteClientId);
@@ -3097,7 +4178,7 @@
          nothing      → the setup gate                                        */
     if (security.enabled && localStorage.getItem(LS.vault)) {
       state.cfg = null;                      // never hold the key while locked
-      state.chat = []; state.drafts = []; state.memory = [];
+      state.chat = []; state.drafts = []; state.notes = [];
       $('gate').hidden = true;
       $('app').hidden = true;
       $('lockScreen').hidden = false;

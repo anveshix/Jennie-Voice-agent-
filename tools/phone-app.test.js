@@ -131,6 +131,13 @@ async function boot(options = {}) {
             setTimeout(() => reject(err), 5);
           });
         }
+        if (step && typeof step === 'object' && step.sse) {
+          const enc = new TextEncoder();
+          const chunks = step.sse.map((c) => enc.encode('data: ' + JSON.stringify({ choices: [{ delta: { content: c } }] }) + '\n\n')).concat([enc.encode('data: [DONE]\n\n')]);
+          let i = 0;
+          return { ok: true, status: 200, headers: { get: () => 'text/event-stream' }, body: { getReader: () => ({ read: async () => (i < chunks.length ? { done: false, value: chunks[i++] } : { done: true }), cancel() {} }) } };
+        }
+        if (step && typeof step === 'object' && step.msg) return { ok: true, status: 200, json: async () => ({ choices: [{ message: step.msg, finish_reason: step.msg.tool_calls ? 'tool_calls' : 'stop' }] }) };
         if (step === 'empty') return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '' }, finish_reason: 'length' }] }) };
         if (step === 'truncated') return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'Respected Sir, I am' }, finish_reason: 'length' }] }) };
         if (step === '500') return { ok: false, status: 500, json: async () => ({ error: { message: 'boom' } }) };
@@ -153,7 +160,22 @@ async function boot(options = {}) {
         })
       };
     }
-    if (target.includes('upload/drive')) return { ok: true, status: 200, json: async () => ({ id: 'f1', name: 'Draft.md' }) };
+    if (target.includes('api.elevenlabs.io/v1/text-to-speech')) {
+      if (options.elevenFail) return { ok: false, status: options.elevenFail, json: async () => ({ detail: { message: 'bad' } }) };
+      return { ok: true, status: 200, blob: async () => new window.Blob(['mp3']) };
+    }
+    if (target.includes('api.elevenlabs.io/v1/speech-to-text')) return { ok: true, status: 200, json: async () => ({ text: 'kal ka din kaisa rahega' }) };
+    if (target.includes('upload/drive')) {
+      const raw = String(fetchOptions.body || '');
+      const parts = raw.split(/--jenni\d+/);
+      const media = parts[2] ? parts[2].split('\r\n\r\n').slice(1).join('\r\n\r\n').replace(/\r\n$/, '') : '';
+      if (options.driveStore && media) options.driveStore.sealed = media;
+      return { ok: true, status: 200, json: async () => ({ id: 'f1', name: 'Draft.md' }) };
+    }
+    if (options.driveStore && target.includes('alt=media')) return { ok: true, status: 200, json: async () => JSON.parse(options.driveStore.sealed) };
+    if (options.driveStore && target.includes('drive/v3/files') && target.includes('jenni-backup')) {
+      return { ok: true, status: 200, json: async () => ({ files: options.driveStore.sealed ? [{ id: 'f1', name: 'jenni-backup.json' }] : [] }) };
+    }
     if (target.includes('drive/v3/files')) {
       return { ok: true, status: 200, json: async () => ({ files: [{ id: 'a', name: 'Notes.md', modifiedTime: '2026-11-01T10:00:00Z', webViewLink: 'https://drive.google.com/x' }] }) };
     }
@@ -169,7 +191,20 @@ async function boot(options = {}) {
   window.eval(fs.readFileSync(path.join(ROOT, 'security.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'docs.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'github.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'brain.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'remind-store.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'connectors.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'agent.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'office.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'evals.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'audio.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'voices.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'proactive.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'google.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'tools.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'verify.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'budget.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'memory.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'));
   await wait(180);
 
@@ -203,7 +238,7 @@ function submit(window, text) {
   /* ── mobile shell ──────────────────────────────────────────────────────── */
   b = await boot();
   const navItems = [...b.window.document.querySelectorAll('.tab')];
-  ok(navItems.length === 5, 'bottom navigation has five items', navItems.map((t) => t.textContent.trim()).join('/'));
+  ok(navItems.length === 6, 'bottom navigation has six items', navItems.map((t) => t.textContent.trim()).join('/'));
   ok(navItems.every((t) => t.querySelector('svg')), 'every nav item has an icon');
   ok(b.$('appbarTitle') !== null && b.$('brandMeta') !== null, 'app bar shows title and provider');
   ok(b.$('btnDriveQuick') !== null, 'app bar has a Drive shortcut');
@@ -420,7 +455,9 @@ function submit(window, text) {
   /* ── security: PIN, encrypted key, cooldown, wipe ──────────────────────── */
   b = await boot({ cfg: null, seed: {
     jenni_chat_v1: JSON.stringify([{ role: 'me', text: 'MARKER-PRIVATE-CHAT' }]),
-    jenni_memory_v1: JSON.stringify([{ id: 'm1', text: 'MARKER-PRIVATE-MEM', cat: 'fact', ts: 1 }]),
+    jenni_notes_v1: JSON.stringify([{ id: 'm1', text: 'MARKER-PRIVATE-MEM', cat: 'fact', ts: 1 }]),
+    jenni_memory_v1: JSON.stringify([{ id: 'f1', kind: 'fact', text: 'MARKER-PRIVATE-FACT', hits: 1, confidence: 0.9, at: '2026-11-01' }, { id: 'old', text: 'MARKER-LEGACY-NOTE', cat: 'fact', ts: 1 }]),
+    jenni_skills_v1: JSON.stringify([{ name: 'MARKER-PRIVATE-SKILL', triggers: ['zzz'], steps: ['a'] }]),
     jenni_drafts_v1: JSON.stringify([{ id: 'd1', title: 't', text: 'MARKER-PRIVATE-DRAFT', at: '' }])
   } });
   ok(b.$('gatePinWrap') !== null, 'gate offers an optional PIN');
@@ -449,7 +486,7 @@ function submit(window, text) {
   const LSx = b.window.localStorage;
   const allStored = Object.keys(LSx).map((k) => LSx.getItem(k)).join('|');
   ok(!allStored.includes('MARKER-PRIVATE'), 'no chat/memory/draft text is readable in storage after PIN');
-  ok(['chat', 'memory', 'drafts'].every((n) => LSx.getItem('jenni_' + n + '_v1_enc') && LSx.getItem('jenni_' + n + '_v1') === null), 'chat, memory and drafts are stored only as encrypted blobs');
+  ok(['chat', 'notes', 'drafts', 'memory', 'skills'].every((n) => LSx.getItem('jenni_' + n + '_v1_enc') && LSx.getItem('jenni_' + n + '_v1') === null), 'chat, notes, drafts, agent facts and skills are stored only as encrypted blobs');
   ok(JSON.parse(LSx.getItem('jenni_chat_v1_enc')).data && JSON.parse(LSx.getItem('jenni_chat_v1_enc')).iv, 'blob is AES-GCM (iv + data)');
 
   /* locking hides the app and drops the key from memory */
@@ -477,7 +514,9 @@ function submit(window, text) {
   ok(b.$('brandMeta').textContent.includes('Groq'), 'the provider is restored from the vault', b.$('brandMeta').textContent);
   ok(b.window.localStorage.getItem('jenni_cfg_v1') === null, 'unlocking does not write the key back in plaintext');
   ok(b.window.document.body.textContent.includes('MARKER-PRIVATE-CHAT'), 'chat history is decrypted after the right PIN');
-  ok(b.window.document.body.textContent.includes('MARKER-PRIVATE-MEM'), 'memory is decrypted after the right PIN');
+  ok(b.window.document.body.textContent.includes('MARKER-PRIVATE-MEM'), 'notes are decrypted after the right PIN');
+  ok(b.window.document.body.textContent.includes('MARKER-PRIVATE-FACT'), 'agent facts are decrypted after the right PIN');
+  ok(JSON.parse(b.window.localStorage.getItem('jenni_notes_v1_enc')).data.length > 10, 'notes blob exists after unlock');
 
   /* the setup field shows a mask, never the real key */
   b.$('btnOpenSetup').click();
@@ -1055,6 +1094,244 @@ function submit(window, text) {
   ok(last.textContent.includes('Key galat'), '401 explains itself in plain words');
   b.dom.window.close();
 
+  /* ── restored behaviour: memory tags, streaming, streamed voice ─────────── */
+  b = await boot({ script: ['Theek hai, yaad rakh liya.\n[[remember: Principal likes short circulars]]'] });
+  submit(b.window, 'hello');
+  await wait(300);
+  const tagged = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].pop().textContent;
+  ok(!tagged.includes('[[') && tagged.includes('yaad rakh liya'), 'memory tags are stripped from the reply', tagged);
+  ok(/short circulars/.test(b.window.localStorage.getItem('jenni_notes_v1') || ''), 'a model-written [[remember]] is saved to notes');
+  b.dom.window.close();
+
+  b = await boot({ script: [{ sse: ['Haan yaar, ', 'kar deti hoon. ', 'Pehle notice ', 'banate hain.'] }] });
+  submit(b.window, 'notice ka plan');
+  await wait(400);
+  const streamedText = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].pop().textContent;
+  ok(streamedText === 'Haan yaar, kar deti hoon. Pehle notice banate hain.', 'a streamed reply is assembled in full', streamedText);
+  ok(JSON.parse(b.calls.find((c) => c.url.includes('chat/completions')).options.body).stream === true, 'the request asks for a stream');
+  b.dom.window.close();
+
+  b = await boot({ script: [{ sse: ['Haan yaar, ', 'main kar deti hoon ye kaam. ', 'Pehle notice ', 'ka draft banate hain.\n', '[[remember: likes drafts]]'] }] });
+  b.$('btnVoice').click();
+  await wait(90);
+  b.rec.last.say('kal ka din kaisa rahega');
+  await wait(900);
+  ok(b.tts.spoken.length >= 2, 'a streamed answer is spoken sentence by sentence', String(b.tts.spoken.length));
+  ok(b.tts.spoken.every((u) => !u.text.includes('[[') && !u.text.includes('likes drafts')), 'memory tags are never spoken');
+  b.rec.last.say('ruko');
+  await wait(400);
+  b.dom.window.close();
+
+  /* ── Office desk ───────────────────────────────────────────────────────── */
+  b = await boot();
+  b.window.document.querySelector('.tab[data-tab="office"]').click();
+  await wait(150);
+  ok(b.$('sheet-office').hidden === false, 'Office tab opens the Office desk');
+  ok(b.$('offType').options.length === 8, 'eight document types are offered', String(b.$('offType').options.length));
+  b.$('school_name').value = 'Dumka Public School'; b.$('btnSchoolSave').click();
+  b.$('offType').value = 'notice'; b.$('offType').dispatchEvent(new b.window.Event('change'));
+  b.$('off_subject').value = 'Sports Day'; b.$('off_body').value = 'Reach by 8:30\nWear uniform';
+  b.$('btnOffMake').click();
+  ok(b.$('offOut').value.includes('DUMKA PUBLIC SCHOOL') && b.$('offOut').value.includes('1. Reach by 8:30'), 'notice is built with letterhead and numbered points');
+  b.$('btnOffMake').click();
+  ok(/NTC\/2$/.test((b.$('offOut').value.match(/DP\/[^\s]+|DPS\/[^\s]+/) || [''])[0]) || /\/NTC\/2/.test(b.$('offOut').value), 'reference number increments per document');
+  b.$('offType').value = 'roster'; b.$('offType').dispatchEvent(new b.window.Event('change'));
+  b.$('off_staff').value = 'Anil\nBina\nChandan\nDeepa'; b.$('off_duties').value = 'Assembly | 2\nGate | 1';
+  b.$('btnOffMake').click();
+  ok(b.$('offOut').value.includes('| Assembly |') && b.$('offOut').value.includes('| Staff | Duties |'), 'duty roster table is generated');
+  b.$('btnOffSave').click();
+  ok(JSON.parse(b.window.localStorage.getItem('jenni_drafts_v1') || '[]').length === 1, 'office output saves as a draft');
+  b.dom.window.close();
+
+
+  /* ── agent: tools, permissions, hygiene, verification, budget ──────────── */
+  const tc = (name, args) => ({ role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+  b = await boot({ script: [{ msg: tc('add_task', { title: 'fees notice', due: 'kal' }) }, { msg: { role: 'assistant', content: 'Ho gaya — kal ke liye add kar diya.' } }] });
+  let confirms = 0; b.window.confirm = () => { confirms += 1; return true; };
+  submit(b.window, 'mera task add karo fees notice kal tak');
+  await wait(400);
+  const notes1 = JSON.parse(b.window.localStorage.getItem('jenni_notes_v1') || '[]');
+  ok(notes1.some((n) => n.cat === 'task' && /fees notice/.test(n.text) && /^\d{4}-\d{2}-\d{2}$/.test(n.due)), 'a tool call adds a dated task');
+  ok(confirms === 0, 'local tool calls do not interrupt the owner');
+  ok([...b.window.document.querySelectorAll('.msg--jenni .bubble')].pop().textContent.includes('add kar diya'), 'the tool turn ends with a short confirmation');
+  const firstBody = JSON.parse(b.calls.find((c) => c.url.includes('chat/completions')).options.body);
+  ok(Array.isArray(firstBody.tools) && firstBody.tools.some((t) => t.function.name === 'add_task') && !firstBody.tools.some((t) => t.function.name === 'gmail_search'), 'tools are offered, Google ones only when connected');
+  ok(JSON.parse(b.window.localStorage.getItem('jenni_actions_v1_enc') || 'null') === null && /add_task/.test(b.window.localStorage.getItem('jenni_actions_v1') || ''), 'every tool call is written to the audit trail');
+  b.dom.window.close();
+
+  b = await boot({ script: [{ msg: tc('forget', { text: 'principal' }) }, { msg: { role: 'assistant', content: 'Theek hai, nahi hataya.' } }], seed: { jenni_notes_v1: JSON.stringify([{ id: 'n1', text: 'principal prefers short circulars', cat: 'preference', ts: 1 }]) } });
+  b.window.confirm = () => false;
+  submit(b.window, 'bhool ja principal wali baat');
+  await wait(400);
+  ok(/short circulars/.test(b.window.localStorage.getItem('jenni_notes_v1') || ''), 'a declined destructive tool call leaves memory untouched');
+  b.dom.window.close();
+
+  b = await boot({ script: [{ msg: tc('forget', { text: 'principal' }) }, { msg: { role: 'assistant', content: 'Hata diya.' } }], seed: { jenni_notes_v1: JSON.stringify([{ id: 'n1', text: 'principal prefers short circulars', cat: 'preference', ts: 1 }]) } });
+  b.window.confirm = () => true;
+  submit(b.window, 'bhool ja principal wali baat');
+  await wait(400);
+  ok(!/short circulars/.test(b.window.localStorage.getItem('jenni_notes_v1') || ''), 'an approved forget removes the note');
+  submit(b.window, 'undo');
+  await wait(200);
+  ok(/short circulars/.test(b.window.localStorage.getItem('jenni_notes_v1') || ''), 'undo brings the forgotten note back');
+  b.dom.window.close();
+
+  /* strengths-first: shortcomings are never stored */
+  b = await boot({ script: ['Theek hai.'] });
+  submit(b.window, 'yaad rakho: main bahut aalsi hoon');
+  await wait(300);
+  ok(!/aalsi/.test(b.window.localStorage.getItem('jenni_notes_v1') || ''), 'a self-criticism is not saved to memory');
+  b.dom.window.close();
+
+  /* verification: a wrong weekday is repaired before the owner sees it */
+  b = await boot({ script: ['Agle hafte PTM Tuesday, 23/11/2026 ko hai.', 'Agle hafte PTM Monday, 23/11/2026 ko hai.'] });
+  submit(b.window, 'agle hafte ptm ki date line likh do');
+  await wait(500);
+  const verified = [...b.window.document.querySelectorAll('.msg--jenni')].pop();
+  ok(verified.textContent.includes('Monday, 23/11/2026') && !verified.textContent.includes('Tuesday, 23/11/2026'), 'a wrong weekday is repaired automatically', verified.textContent.slice(0, 80));
+  b.dom.window.close();
+
+  /* context budget: a very long chat is condensed, not sent whole */
+  const longChat = Array.from({ length: 60 }, (_, i) => ({ role: i % 2 ? 'jenni' : 'me', text: 'turn ' + i + ' ' + 'lorem ipsum dolor sit amet '.repeat(20) }));
+  b = await boot({ script: ['Theek hai.'], seed: { jenni_chat_v1: JSON.stringify(longChat) } });
+  submit(b.window, 'ab kya karna hai');
+  await wait(300);
+  const sent = JSON.parse(b.calls.find((c) => c.url.includes('chat/completions')).options.body).messages;
+  const totalChars = sent.reduce((n, m) => n + String(m.content || '').length, 0);
+  ok(sent.length < 30 && totalChars < 14000, 'a 60-turn chat is trimmed to the budget', sent.length + ' msgs, ' + totalChars + ' chars');
+  ok(/EARLIER IN THIS CHAT/.test(sent[0].content), 'trimmed turns survive as a recap');
+  b.dom.window.close();
+
+  /* companion: ready-made next step, recurring tasks, wins */
+  b = await boot({ seed: { jenni_notes_v1: JSON.stringify([
+    { id: 't1', text: 'Sports day notice', cat: 'task', ts: 1, due: new Date(Date.now() + 86400000).toISOString().slice(0, 10) },
+    { id: 't2', text: 'Weekly result report', cat: 'task', ts: 2, due: new Date(Date.now() - 86400000).toISOString().slice(0, 10), repeat: 'weekly', weekday: 1, rc: 1 }
+  ]) } });
+  await wait(250);
+  ok(b.$('suggestStrip').hidden === false && /Sports day notice/.test(b.$('suggestStrip').textContent), 'Jenni offers a ready next step for due work');
+  ok(!/late|galti|overdue/i.test(b.$('suggestStrip').textContent), 'suggestions never scold');
+  b.$('btnOpenSetup').click(); await wait(200);
+  const doneBtn = [...b.window.document.querySelectorAll('#notesList button')].find((x) => /Done/.test(x.textContent));
+  doneBtn.click();
+  const after = JSON.parse(b.window.localStorage.getItem('jenni_notes_v1'));
+  const rolled = after.find((n) => n.id === 't2');
+  ok(rolled && rolled.due > new Date().toISOString().slice(0, 10), 'a recurring task rolls to its next date instead of vanishing', rolled && rolled.due);
+  ok(JSON.parse(b.window.localStorage.getItem('jenni_wins_v1') || '[]').length === 1, 'finished work is logged as a win');
+  b.dom.window.close();
+
+  /* encrypted Drive backup round-trip (key is the PIN/passphrase) */
+  const driveBox = {};
+  b = await boot({ driveStore: driveBox, drive: { clientId: 'x.apps.googleusercontent.com' }, driveToken: { token: 'tok', expires: Date.now() + 3600000 }, seed: { jenni_notes_v1: JSON.stringify([{ id: 'n1', text: 'MARKER-BACKUP-NOTE likes drafts', cat: 'preference', ts: 1 }]) } });
+  b.window.prompt = () => 'pass-1234';
+  b.window.document.querySelector('.tab[data-tab="drive"]').click(); await wait(150);
+  b.$('btnBackupNow').click(); await wait(500);
+  ok(driveBox.sealed && !driveBox.sealed.includes('MARKER-BACKUP-NOTE') && /"data"/.test(driveBox.sealed), 'the Drive backup is uploaded encrypted');
+  b.window.localStorage.setItem('jenni_notes_v1', '[]');
+  b.dom.window.close();
+  b = await boot({ driveStore: driveBox, drive: { clientId: 'x.apps.googleusercontent.com' }, driveToken: { token: 'tok', expires: Date.now() + 3600000 } });
+  b.window.prompt = () => 'pass-1234';
+  b.window.document.querySelector('.tab[data-tab="drive"]').click(); await wait(150);
+  b.$('btnRestore').click(); await wait(600);
+  ok(/MARKER-BACKUP-NOTE/.test(b.window.localStorage.getItem('jenni_notes_v1') || ''), 'a new phone restores everything from the encrypted backup');
+  b.dom.window.close();
+
+  /* Hey Jenni */
+  b = await boot({ script: ['Haan, bolo.'], seed: { jenni_wake_on: '1' } });
+  await wait(250);
+  ok(b.rec.starts >= 1 && !b.$('app').classList.contains('is-voice'), 'wake listener runs while voice mode is off');
+  b.rec.last.say('hey jenni kal ka din kaisa rahega');
+  await wait(900);
+  ok(b.$('app').classList.contains('is-voice'), 'saying "Hey Jenni" opens voice mode');
+  ok([...b.window.document.querySelectorAll('.msg--me')].some((m) => /kal ka din kaisa rahega/.test(m.textContent) && !/jenni/i.test(m.textContent)), 'the request after the wake word is sent without the wake word');
+  b.dom.window.close();
+
+  /* self-test runs and reports a score */
+  b = await boot({ script: Array(16).fill('Theek hai.') });
+  b.window.document.querySelector('.tab[data-tab="setup"]').click(); await wait(200);
+  b.$('btnEval').click(); await wait(1500);
+  ok(/\d+\/16 sahi/.test(b.$('evalResult').textContent), 'the self-test reports a score', b.$('evalResult').textContent);
+  ok(JSON.parse(b.window.localStorage.getItem('jenni_evals_v1') || '[]').length === 1, 'self-test history is kept');
+  b.dom.window.close();
+
+
+  /* ── Gemini voice input without browser speech recognition ─────────────── */
+  const GEMINI = { provider: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.5-flash', transcribe: '', apiKey: 'AIzaFakeFakeFakeFake12345' };
+  b = await boot({ cfg: GEMINI, script: ['kal ka din kaisa rahega', 'Achha rahega, tayyar ho jao.'] });
+  b.window.SpeechRecognition = undefined; b.window.webkitSpeechRecognition = undefined;
+  b.window.navigator.mediaDevices = { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) };
+  b.window.MediaRecorder = class { constructor() { this.state = 'inactive'; this.mimeType = 'audio/webm'; } start() { this.state = 'recording'; setTimeout(() => { this.state = 'inactive'; this.ondataavailable({ data: new b.window.Blob([new Uint8Array(4000)]) }); this.onstop(); }, 40); } stop() {} };
+  b.window.Blob.prototype.arrayBuffer = async function () { return new ArrayBuffer(8); };
+  b.window.AudioContext = class { async decodeAudioData() { return { numberOfChannels: 1, sampleRate: 16000, getChannelData: () => new Float32Array(16000).fill(0.1) }; } };
+  b.$('btnVoice').click();
+  await wait(900);
+  const audioCall = b.calls.find((c) => c.url.includes('chat/completions'));
+  const audioBody = JSON.parse(audioCall.options.body);
+  const part = audioBody.messages[0].content.find((x) => x.type === 'input_audio');
+  ok(part && part.input_audio.format === 'wav' && Buffer.from(part.input_audio.data, 'base64').slice(0, 4).toString() === 'RIFF', 'Gemini hears the recording as WAV through the chat endpoint');
+  ok(!b.calls.some((c) => c.url.includes('/audio/transcriptions')), 'no /audio/transcriptions call is made for Gemini');
+  ok([...b.window.document.querySelectorAll('.msg--me')].some((m) => m.textContent.includes('kal ka din kaisa rahega')), 'the transcript becomes the owner\'s message');
+  b.window.document.querySelector('.tab[data-tab="chat"]').click();
+  b.dom.window.close();
+
+
+  /* ── pluggable voices: ElevenLabs speaking + Scribe listening ───────────── */
+  const ELEVEN_CFG = JSON.stringify({ tts: { engine: 'eleven', key: 'XI-KEY', voice: 'VOICE1', model: '' }, stt: { engine: 'default' } });
+  const playInfo = () => ({ played: [], made: 0 });
+  function fakeAudio(win, info) {
+    win.URL.createObjectURL = () => { info.made += 1; return 'blob:x' + info.made; };
+    win.URL.revokeObjectURL = () => {};
+    win.Audio = class { constructor(url) { this.url = url; } play() { info.played.push(this.url); setTimeout(() => this.onended && this.onended(), 5); return Promise.resolve(); } pause() {} };
+  }
+  let info = playInfo();
+  b = await boot({ script: ['Haan yaar, ye kaam ho jayega. Doosri line bhi suno.'], seed: { jenni_voicecfg_v1: ELEVEN_CFG } });
+  fakeAudio(b.window, info);
+  b.$('btnVoice').click(); await wait(90);
+  b.rec.last.say('kal ka din kaisa rahega');
+  await wait(1200);
+  const elevenCalls = b.calls.filter((c) => c.url.includes('api.elevenlabs.io/v1/text-to-speech/VOICE1'));
+  ok(elevenCalls.length >= 1 && elevenCalls[0].options.headers['xi-api-key'] === 'XI-KEY', 'ElevenLabs voices the reply with the owner\'s key');
+  ok(info.played.length >= elevenCalls.length && b.tts.spoken.length === 0, 'its audio is played, the phone voice stays silent', info.played.length + '/' + b.tts.spoken.length);
+  ok(JSON.parse(elevenCalls[0].options.body).model_id === 'eleven_flash_v2_5', 'a fast multilingual model is the default');
+  b.rec.last.say('ruko'); await wait(300);
+  b.dom.window.close();
+
+  info = playInfo();
+  b = await boot({ script: ['Haan yaar, ye kaam ho jayega. Doosri line bhi suno.'], seed: { jenni_voicecfg_v1: ELEVEN_CFG }, elevenFail: 401 });
+  fakeAudio(b.window, info);
+  b.$('btnVoice').click(); await wait(90);
+  b.rec.last.say('kal ka din kaisa rahega');
+  await wait(600);
+  ok(/key galat/.test(b.$('toastHost').textContent), 'the failure is explained in plain words', b.$('toastHost').textContent);
+  await wait(500);
+  ok(b.tts.spoken.length >= 1, 'if the paid voice fails, Jenni still answers in the phone voice');
+  b.rec.last.say('ruko'); await wait(300);
+  b.dom.window.close();
+
+  b = await boot({ script: ['Achha rahega.'], seed: { jenni_voicecfg_v1: JSON.stringify({ tts: { engine: 'browser' }, stt: { engine: 'eleven', key: 'XI-KEY' } }) } });
+  b.window.navigator.mediaDevices = { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) };
+  b.window.MediaRecorder = class { constructor() { this.state = 'inactive'; this.mimeType = 'audio/webm'; } start() { this.state = 'recording'; setTimeout(() => { this.state = 'inactive'; this.ondataavailable({ data: new b.window.Blob([new Uint8Array(4000)]) }); this.onstop(); }, 40); } stop() {} };
+  b.$('btnVoice').click(); await wait(900);
+  ok(b.calls.some((c) => c.url.includes('api.elevenlabs.io/v1/speech-to-text') && c.options.headers['xi-api-key'] === 'XI-KEY'), 'ElevenLabs Scribe listens when chosen, even though the browser could');
+  ok([...b.window.document.querySelectorAll('.msg--me')].some((m) => m.textContent.includes('kal ka din kaisa rahega')), 'the Scribe transcript becomes the owner\'s message');
+  b.window.document.querySelector('.tab[data-tab="chat"]').click();
+  b.dom.window.close();
+
+  /* settings form normalises and stores the config encrypted-at-rest */
+  b = await boot();
+  b.window.document.querySelector('.tab[data-tab="setup"]').click(); await wait(150);
+  b.$('vTtsEngine').value = 'eleven'; b.$('vKey').value = 'K'; b.$('vVoice').value = '';
+  b.$('btnVoiceCfgSave').click();
+  ok(/adhura/.test(b.$('vResult').textContent) && JSON.parse(b.window.localStorage.getItem('jenni_voicecfg_v1')).tts.engine === 'browser', 'an incomplete engine setup falls back to the phone voice and says so');
+  b.$('vTtsEngine').value = 'compat'; b.$('vBase').value = 'https://tts.example/v1'; b.$('vVoice').value = 'af_bella'; b.$('vKey').value = '';
+  b.$('btnVoiceCfgSave').click();
+  ok(JSON.parse(b.window.localStorage.getItem('jenni_voicecfg_v1')).tts.engine === 'compat', 'an OpenAI-compatible open-source server can be saved');
+  b.dom.window.close();
+
+  /* ── legacy notes stored under agent.js's key are split out once ───────── */
+  b = await boot({ seed: { jenni_memory_v1: JSON.stringify([{ id: 'n1', text: 'old note', cat: 'task', ts: 1 }, { id: 'f9', kind: 'fact', text: 'a fact', hits: 1, confidence: 0.9, at: '2026' }]) } });
+  ok(/old note/.test(b.window.localStorage.getItem('jenni_notes_v1') || '') && !/old note/.test(b.window.localStorage.getItem('jenni_memory_v1') || '') && /a fact/.test(b.window.localStorage.getItem('jenni_memory_v1') || ''), 'legacy notes move out of the agent facts key');
+  b.dom.window.close();
+
   /* ── master voice switch + memory ─────────────────────────────────────── */
   b = await boot({});
   const doc = b.window.document;
@@ -1064,7 +1341,7 @@ function submit(window, text) {
   ok(!doc.body.classList.contains('voice-off'), 'voice master ON restores mic');
   doc.getElementById('memInput').value = 'Class 12 SA1 Monday';
   doc.getElementById('btnMemAdd').click();
-  ok(/SA1/.test(b.window.localStorage.getItem('jenni_memory_v1') || ''), 'memory add persists');
+  ok(/SA1/.test(b.window.localStorage.getItem('jenni_notes_v1') || ''), 'memory add persists');
   b.dom.window.close();
 
   console.log('\n' + checks + ' checks, ' + (checks - failures) + ' passed' + (failures ? ', ' + failures + ' FAILED' : ''));

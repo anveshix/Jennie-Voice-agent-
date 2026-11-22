@@ -133,6 +133,9 @@
         <button class="icon-btn icon-btn--round" type="button" id="btnNewChat" aria-label="Naya chat — jo seekha wo yaad rahega">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.4 5.7"/><path d="M20 5v6h-6"/></svg>
         </button>
+        <button class="icon-btn icon-btn--round is-on" type="button" id="btnVoiceMaster" aria-pressed="true" aria-label="Voice on — tap to turn off" title="Voice ON">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path class="vm-slash" style="display:none" d="m3 3 18 18"/></svg>
+        </button>
         <button class="icon-btn icon-btn--round" type="button" id="btnDriveQuick" aria-label="Google Drive connect">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.4 3.2 7.2 12.4"/><path d="M15.6 3.2H8.4L2.8 12.9h7.2z"/><path d="M6.9 17.3h11.2l3.1-5.4H9.9z"/></svg>
           <span class="icon-btn__badge" id="driveBadge" hidden>!</span>
@@ -145,6 +148,7 @@
   </header>
 
   <main class="chat" id="chatScroll">
+    <div class="suggest" id="suggestStrip" hidden aria-label="Jenni ke suggestions"></div>
     <div class="chat__inner" id="messages" aria-live="polite" aria-relevant="additions"></div>
     <div class="chat__empty" id="chatEmpty">
       <div class="orb orb--sm" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -199,6 +203,10 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
       <span>Voice</span>
     </button>
+    <button class="tab" type="button" data-tab="office">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="7" width="16" height="12" rx="2"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M4 12h16"/></svg>
+      <span>Office</span>
+    </button>
     <button class="tab" type="button" data-tab="drafts">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h7L18 8v11a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 5 19V4.9a1.4 1.4 0 0 1 1.5-1.4Z"/><path d="M13 3.5V8h4.5"/></svg>
       <span>Drafts</span>
@@ -217,6 +225,40 @@
 
 <!-- ══════════════════════════════════════════════════════════ SHEETS -->
 <div class="scrim" id="scrim" hidden></div>
+
+<section class="sheet" id="sheet-office" aria-labelledby="officeTitle" hidden>
+  <header class="sheet__head">
+    <h2 id="officeTitle">Office desk</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+  </header>
+  <div class="sheet__body">
+    <p class="hint">Notice, circular, letter, mail, note-sheet, duty roster aur class routine — turant, sahi format me. Voice se bhi bol sakte ho: "notice banao…"</p>
+    <details id="officeSchool">
+      <summary class="label">School profile (letterhead)</summary>
+      <div id="schoolFields"></div>
+      <button class="btn btn--small" type="button" id="btnSchoolSave">Save profile</button>
+    </details>
+    <label class="label" for="offType">Kya banana hai</label>
+    <select class="field" id="offType"></select>
+    <div id="offFields"></div>
+    <div class="row row--wrap">
+      <button class="btn btn--primary" type="button" id="btnOffMake">Banao</button>
+    </div>
+    <p class="room-result" id="offResult" role="status" aria-live="polite"></p>
+    <textarea class="field mono" id="offOut" rows="14" spellcheck="false" placeholder="Draft yahan aayega — seedha edit kar sakte ho"></textarea>
+    <div class="row row--wrap">
+      <button class="btn btn--small" type="button" id="btnOffSave">Save draft</button>
+      <button class="btn btn--small" type="button" id="btnOffDocx">Download .docx</button>
+      <button class="btn btn--small" type="button" id="btnOffCopy">Copy</button>
+    </div>
+    <div class="row row--wrap">
+      <button class="btn btn--small" type="button" data-polish="improve">AI se sudharo</button>
+      <button class="btn btn--small" type="button" data-polish="hindi">Hindi me</button>
+      <button class="btn btn--small" type="button" data-polish="english">English me</button>
+      <button class="btn btn--small" type="button" data-polish="bilingual">Hindi + English</button>
+    </div>
+  </div>
+</section>
 
 <section class="sheet" id="sheet-drafts" aria-labelledby="draftsTitle" hidden>
   <header class="sheet__head">
@@ -280,6 +322,17 @@
     </div>
     <p class="field-hint">Scope <code>drive.file</code> — sirf apni banayi files.</p>
 
+    <label class="row"><input type="checkbox" id="googleExtended"> <span>Calendar + Gmail bhi (sirf padhna + draft; send nahi)</span></label>
+    <p class="field-hint">On karne par scopes: <code>calendar.events</code>, <code>gmail.readonly</code>, <code>gmail.compose</code>. Jenni mail <strong>bhej nahi sakti</strong>, sirf draft bana sakti hai.</p>
+
+    <h3 class="sheet__sub">Backup (encrypted)</h3>
+    <p class="field-hint">Poori memory, drafts, playbooks Drive me ek encrypted file me. Naye phone par Restore se wapas. PIN set ho to wahi passphrase hai.</p>
+    <div class="row row--wrap">
+      <button class="btn btn--primary btn--small" type="button" id="btnBackupNow">Backup now</button>
+      <button class="btn btn--small" type="button" id="btnRestore">Restore</button>
+    </div>
+    <p class="room-result" id="backupStatus" role="status"></p>
+
     <h3 class="sheet__sub">Uploaded files</h3>
     <div class="stack" id="driveFiles"></div>
   </div>
@@ -316,15 +369,14 @@
     </div>
     <p class="room-result" id="setupResult" role="status" aria-live="polite"></p>
 
-    <h3 class="sheet__sub">Memory (Jenni ko kya yaad hai)</h3>
-    <div id="memoryList"></div>
+    <h3 class="sheet__sub">Notes &amp; tasks</h3>
+    <div id="notesList"></div>
     <input class="field" id="memInput" maxlength="220" placeholder="note, ya  todo: SA1 report Monday">
+    <label class="row"><input type="checkbox" id="remindToggle"> <span>Task reminders (notification)</span></label>
+    <p class="room-result" id="remindInfo" role="status"></p>
     <div class="row row--wrap">
       <button class="btn btn--primary" type="button" id="btnMemAdd">Add</button>
-      <button class="btn" type="button" id="btnMemExport">Export</button>
-      <button class="btn" type="button" id="btnMemImport">Import</button>
       <button class="btn btn--ghost" type="button" id="btnMemClear">Clear all</button>
-      <input type="file" id="memFile" accept="application/json" hidden>
     </div>
 
     <h3 class="sheet__sub">NeverMind agents &amp; skill packs</h3>
@@ -344,6 +396,53 @@
     <input class="field" id="packQuery" placeholder="skills.sh par dhundo (e.g. pdf, testing)">
     <button class="btn" type="button" id="btnPackFind">Find skills</button>
     <p class="room-result" id="nmResult" role="status" aria-live="polite"></p>
+
+    <h3 class="sheet__sub">Awaaz engine (bolna / sunna)</h3>
+    <p class="field-hint">Default: phone ki free awaaz. Chaho to ElevenLabs ya apna open-source voice server (OpenAI-compatible). Jo Jenni bolegi wo us service ko bheja jata hai; key PIN se encrypt rehti hai.</p>
+    <label class="label" for="vTtsEngine">Bolna (TTS)</label>
+    <select class="field" id="vTtsEngine">
+      <option value="browser">Phone ki awaaz (free)</option>
+      <option value="eleven">ElevenLabs</option>
+      <option value="compat">OpenAI-compatible server (Kokoro, Piper, OpenAI, Groq…)</option>
+    </select>
+    <input class="field" id="vKey" type="password" autocomplete="off" placeholder="API key (ElevenLabs / server)">
+    <input class="field mono" id="vVoice" spellcheck="false" autocapitalize="off" placeholder="Voice ID (ElevenLabs) ya voice naam (af_bella, alloy…)">
+    <select class="field" id="vVoiceList" hidden></select>
+    <input class="field mono" id="vModel" spellcheck="false" autocapitalize="off" placeholder="Model (khali = default; ElevenLabs: eleven_flash_v2_5)">
+    <input class="field mono" id="vBase" spellcheck="false" autocapitalize="off" placeholder="Server URL https://…/v1 (sirf OpenAI-compatible ke liye)">
+    <label class="label" for="vSttEngine">Sunna (STT)</label>
+    <select class="field" id="vSttEngine">
+      <option value="default">Browser / Gemini (default)</option>
+      <option value="eleven">ElevenLabs Scribe</option>
+      <option value="compat">OpenAI-compatible server (Whisper, faster-whisper…)</option>
+    </select>
+    <input class="field" id="vSttKey" type="password" autocomplete="off" placeholder="STT key (khali = upar wali key)">
+    <input class="field mono" id="vSttBase" spellcheck="false" autocapitalize="off" placeholder="STT server URL https://…/v1">
+    <input class="field mono" id="vSttModel" spellcheck="false" autocapitalize="off" placeholder="STT model (khali = scribe_v1 / whisper-1)">
+    <div class="row row--wrap">
+      <button class="btn btn--primary btn--small" type="button" id="btnVoiceCfgSave">Save</button>
+      <button class="btn btn--small" type="button" id="btnVoicesLoad">Meri ElevenLabs voices</button>
+      <button class="btn btn--small" type="button" id="btnVoiceCfgTest">Awaaz test</button>
+    </div>
+    <p class="room-result" id="vResult" role="status" aria-live="polite"></p>
+
+    <h3 class="sheet__sub">Jenni ka agent mode</h3>
+    <label class="label" for="autonomySel">Kitni azaadi</label>
+    <select class="field" id="autonomySel">
+      <option value="smart">Smart — phone ke andar ke kaam khud, bahar ke kaam (mail draft, calendar) puch kar</option>
+      <option value="ask">Sab kuch puch kar</option>
+      <option value="auto">Zyada khud (bahar ke kaam phir bhi puchegi)</option>
+    </select>
+    <label class="row"><input type="checkbox" id="wakeToggle"> <span>"Hey Jenni" bolke jagao (app khula ho tab)</span></label>
+    <label class="row"><input type="checkbox" id="bargeToggle"> <span>Beech me tok sakte ho (headphones best)</span></label>
+    <p class="field-hint">Kya kiya: Jenni ke har tool-kaam ka record neeche. Mail <strong>bhejna</strong> uske bas me hai hi nahi.</p>
+    <div id="actionLog" class="stack stack--tight"></div>
+
+    <h3 class="sheet__sub">Jenni ki jaanch (self-test)</h3>
+    <p class="field-hint">16 asli sawal, model ke jawab par nambar. Model ya prompt badalne ke baad chalao — behtar hui ya nahi, dikh jayega. (~16 requests)</p>
+    <div class="row row--wrap"><button class="btn btn--small" type="button" id="btnEval">Jaanch chalao</button></div>
+    <p class="room-result" id="evalResult" role="status"></p>
+    <div id="evalOut" class="stack stack--tight"></div>
 
     <h3 class="sheet__sub">2. Security</h3>
     <div class="secgrid">
@@ -502,7 +601,20 @@
 <script src="./security.js"></script>
 <script src="./docs.js"></script>
 <script src="./github.js"></script>
+<script src="./brain.js"></script>
+<script src="./remind-store.js"></script>
+<script src="./connectors.js"></script>
 <script src="./agent.js"></script>
+<script src="./office.js"></script>
+<script src="./memory.js"></script>
+<script src="./budget.js"></script>
+<script src="./verify.js"></script>
+<script src="./tools.js"></script>
+<script src="./google.js"></script>
+<script src="./proactive.js"></script>
+<script src="./evals.js"></script>
+<script src="./audio.js"></script>
+<script src="./voices.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

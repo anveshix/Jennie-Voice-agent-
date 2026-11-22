@@ -23,18 +23,37 @@
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
   /** Very small Markdown subset: #/## headings, - / * bullets, 1. lists, **bold**. */
+  const isPipeRow = (line) => /^\s*\|.*\|\s*$/.test(line);
+  const isPipeRule = (line) => /^\s*\|[\s:|-]+\|\s*$/.test(line) && /-/.test(line);
+
   function parseLines(text) {
-    return String(text || '')
-      .replace(/\r\n?/g, '\n')
-      .split('\n')
-      .map((raw) => {
+    const raws = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+    const out = [];
+    for (let i = 0; i < raws.length; i += 1) {
+      if (isPipeRow(raws[i])) {                       // markdown table → one block
+        const rows = [];
+        while (i < raws.length && isPipeRow(raws[i])) {
+          if (!isPipeRule(raws[i])) rows.push(raws[i].trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()));
+          i += 1;
+        }
+        i -= 1;
+        out.push({ kind: 'table', rows });
+      } else {
+        out.push(parseLine(raws[i]));
+      }
+    }
+    return out;
+  }
+
+  function parseLine(raw) {
+    return [raw].map((raw) => {
         const line = raw.replace(/\s+$/, '');
         if (!line.trim()) return { kind: 'gap' };
         if (/^#{1,6}\s+/.test(line)) return { kind: 'heading', text: line.replace(/^#{1,6}\s+/, '') };
         if (/^\s*[-*•]\s+/.test(line)) return { kind: 'bullet', text: line.replace(/^\s*[-*•]\s+/, '') };
         if (/^\s*\d+[.)]\s+/.test(line)) return { kind: 'number', text: line.replace(/^\s*\d+[.)]\s+/, '') };
         return { kind: 'plain', text: line };
-      });
+      })[0];
   }
 
   function run(text, bold) {
@@ -48,7 +67,16 @@
     }).join('');
   }
 
+  function table(rows) {
+    const cols = Math.max(...rows.map((r) => r.length));
+    const border = ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map((b) => `<w:${b} w:val="single" w:sz="4" w:space="0" w:color="808080"/>`).join('');
+    const cell = (text, head) => `<w:tc><w:tcPr><w:tcW w:w="${Math.floor(9000 / cols)}" w:type="dxa"/></w:tcPr><w:p>${run(text, head)}</w:p></w:tc>`;
+    const trs = rows.map((r, i) => '<w:tr>' + Array.from({ length: cols }, (_, c) => cell(r[c] || '', i === 0)).join('') + '</w:tr>').join('');
+    return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>${border}</w:tblBorders></w:tblPr>${trs}</w:tbl><w:p/>`;
+  }
+
   function para(entry) {
+    if (entry.kind === 'table') return table(entry.rows);
     if (entry.kind === 'gap') return '<w:p/>';
     if (entry.kind === 'heading') {
       return '<w:p><w:pPr><w:spacing w:before="240" w:after="120"/></w:pPr>' + run(entry.text, true) + '</w:p>';

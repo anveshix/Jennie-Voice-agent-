@@ -366,6 +366,56 @@ Skills (official letters, lesson plans, result diagnostics, planner, commerce tu
 
 ## Encrypted chat history
 
-With a PIN set, **chat, drafts and memory** are stored only as AES-256-GCM blobs (`*_v1_enc`), under a key derived from the PIN (PBKDF2-SHA256, 210k, own salt) that lives in memory only while unlocked. Locking (manual, idle, tab hide) clears them from memory and the page; nothing is written while locked. Setting, changing or removing the PIN re-encrypts/migrates existing data. Unlocking no longer writes the API key back to storage in plaintext. Forget the PIN and the data is unrecoverable — use Memory → Export for a backup first.
+With a PIN set, **chat, drafts, notes and the agent's facts, playbooks and journal** are stored only as AES-256-GCM blobs (`*_v1_enc`), under a key derived from the PIN (PBKDF2-SHA256, 210k, own salt) that lives in memory only while unlocked. Locking (manual, idle, tab hide) clears them from memory and the page; nothing is written while locked. Setting, changing or removing the PIN re-encrypts/migrates existing data. Unlocking no longer writes the API key back to storage in plaintext. Forget the PIN and the data is unrecoverable — use Setup → Backup → Export data first.
 
 Phone use (GitHub Pages app) has no server, so `JENNI_ACCESS_TOKEN` is not needed there; it only matters if you deploy the Node server. For the NeverMind bridge from the phone, set `NEVERMIND_API_TOKEN`.
+
+## Task reminders
+
+Setup → Memory → **Task reminders**. Overdue/today tasks trigger a notification (not before 08:00 IST), once per state.
+- **App open or in background:** checked every minute.
+- **App closed:** Android Chrome with Jenni installed to the Home screen uses Periodic Background Sync (about 1–2 checks/day; Chrome decides the exact time). iOS Safari and uninstalled tabs do not support this — the daily briefing on opening is the fallback. A static site has no push server, so there are no exact-time alarms.
+- **Privacy:** the service worker cannot read encrypted data, so a small index (due dates) is kept in IndexedDB. With a PIN set it holds **no titles** — notifications say only "1 overdue, 1 aaj due". Without a PIN they include titles. Panic wipe clears it.
+
+## Voice feel + Office desk
+
+- **Streaming:** replies appear word by word, and in voice mode each finished sentence is spoken while the rest is still being written (first words after ~1 s instead of after the whole answer). Memory tags are never read aloud. Providers that do not stream fall back to the old whole-reply path.
+- **Office tab:** notice, circular, official letter, application, e-mail, note-sheet, **duty roster / deployment routine** and **class routine** in one tap. Set the school profile once (letterhead, UDISE, signatory); reference numbers auto-increment per session (`ABC/2026-27/NTC/3`). Output is editable, saves to Drafts, downloads as `.docx` (tables are real Word tables), and can be polished/translated by the model on request.
+- The roster and routine are **solvers, not model text**: no teacher double-booked, no class clash, fair duty split, unavailability honoured, and impossible demands are reported instead of hidden (tested).
+
+## Second-companion upgrade (gaps 1–12)
+
+| # | What now exists | Where |
+|---|---|---|
+| 1 | **Function-calling**: 15 tools (tasks, memory, calendar, mail draft, documents, NeverMind, GitHub), routed only when a message needs them; falls back to plain chat if the provider has no tools | `docs/tools.js` |
+| 2 | **Google Calendar + Gmail** (Drive tab → "Calendar + Gmail"): read events/mail metadata, create events, save **drafts**. No send scope exists | `docs/google.js` |
+| 3 | **Verification** of every reply: weekday↔date, arithmetic, percentages, marks totals, UDISE, leftover `[placeholders]`, personal numbers; one automatic repair pass | `docs/verify.js` |
+| 4 | **One memory view**: facts + notes de-duplicated, newer single-valued facts win, decayed facts retire | `docs/memory.js` |
+| 5 | **Token budget**: prompt sections are prioritised and fitted; old turns become a recap | `docs/budget.js` |
+| 6 | Streaming (earlier) | `docs/app.js` |
+| 7 | **"Hey Jenni"** wake word and optional **barge-in** (while the page is open; headphones for barge-in) | `docs/app.js` |
+| 8 | **Companion suggestions**: ready next step for due work, calendar heads-up, weekly rhythm, wins recap | `docs/proactive.js` |
+| 9 | **Autonomy setting** (ask / smart / auto), approval prompts for destructive and external actions, **taint rule** (after reading mail/web, every write asks), audit trail | `docs/tools.js`, Setup |
+| 10 | Recurring tasks (`har Monday …`), fact decay, `correct_memory`, `undo` | `docs/memory.js` |
+| 11 | **Encrypted Drive backup/restore** (PIN or passphrase), daily silent backup when connected | Drive tab |
+| 12 | **Self-test**: 16 rubric-scored requests with history, to see if a model/prompt change helped | Setup → Jenni ki jaanch |
+
+**Strengths-first**: Jenni's charter treats the owner as a senior peer (Principal, PGT Commerce, CBSE coordinator), never saves or surfaces self-criticism or shortcomings, words pending work as "ready to do", and celebrates finished work.
+
+Voice input without browser speech recognition: Gemini (empty voice-to-text model) hears the recording through the chat endpoint — converted in the browser to 16 kHz WAV (`docs/audio.js`) — and recordings now end ~0.9 s after the owner stops talking instead of on a fixed 6 s timer. Set the voice-to-text model to `chat` to use the same route with other audio-capable providers.
+
+Known limits: a static site has no push server (see Task reminders); the Gemini audio route was verified with mocked responses, not a live Gemini call; Google calls were verified against mocked responses, not a live account; cross-device sync is backup/restore, not live.
+
+## Voices: ElevenLabs and open-source (Setup → Awaaz engine)
+
+Default stays the free phone voice. Choose per direction:
+
+| | Speaking (TTS) | Listening (STT) |
+|---|---|---|
+| **ElevenLabs** | key + Voice ID (use "Meri ElevenLabs voices" to list yours); default model `eleven_flash_v2_5` (Hindi/Hinglish) | **Scribe** (`scribe_v1`), reuses the same key |
+| **OpenAI-compatible server** | any `…/v1/audio/speech` — OpenAI, Groq, or open-source you host: Kokoro-FastAPI, openedai-speech (Piper), LocalAI | any `…/v1/audio/transcriptions` — Whisper, Speaches / faster-whisper-server |
+| Browser / Gemini | phone voice | browser recognition, or Gemini through the chat endpoint |
+
+How it behaves: each sentence is sent for synthesis as soon as it is written and played in order (prefetch), so it keeps the streaming feel. If the chosen engine fails (bad key, quota, network) Jenni says why once and finishes in the phone voice — never silent. A failing listening engine falls back to the default the same way.
+
+Notes: the server URL must be **https** (or `http://localhost`); browsers block a secure page from calling a plain-http LAN box — expose it with a tunnel (Cloudflare Tunnel, Tailscale Funnel) or put it behind your own HTTPS. Keys live in the encrypted store, so a PIN protects them; they are never in backups/exports. ElevenLabs bills per character spoken. Running a model *inside* the browser (WASM Whisper/Piper from GitHub) is not included: it needs ~80–300 MB of downloads and a looser Content-Security-Policy.
