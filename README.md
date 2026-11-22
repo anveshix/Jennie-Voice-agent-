@@ -402,4 +402,6 @@ Setup → Memory → **Task reminders**. Overdue/today tasks trigger a notificat
 
 **Strengths-first**: Jenni's charter treats the owner as a senior peer (Principal, PGT Commerce, CBSE coordinator), never saves or surfaces self-criticism or shortcomings, words pending work as "ready to do", and celebrates finished work.
 
-Known limits: a static site has no push server (see Task reminders); Gemini voice input still depends on the browser's speech recognition; Google calls were verified against mocked responses, not a live account; cross-device sync is backup/restore, not live.
+Voice input without browser speech recognition: Gemini (empty voice-to-text model) hears the recording through the chat endpoint — converted in the browser to 16 kHz WAV (`docs/audio.js`) — and recordings now end ~0.9 s after the owner stops talking instead of on a fixed 6 s timer. Set the voice-to-text model to `chat` to use the same route with other audio-capable providers.
+
+Known limits: a static site has no push server (see Task reminders); the Gemini audio route was verified with mocked responses, not a live Gemini call; Google calls were verified against mocked responses, not a live account; cross-device sync is backup/restore, not live.

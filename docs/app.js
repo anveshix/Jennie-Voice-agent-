@@ -65,6 +65,7 @@
   const VERIFY = window.JENNI_VERIFY;
   const TOOLS = window.JENNI_TOOLS;
   const GOOGLE = window.JENNI_GOOGLE;
+  const AUDIO = window.JENNI_AUDIO;
   const PRO = window.JENNI_PROACTIVE;
   const EVALS = window.JENNI_EVALS;
   const AGENT = window.JENNI_AGENT || {};
@@ -1688,9 +1689,26 @@
       voice.recorder = recorder;
       recorder.start();
       clearTimeout(voice.recordingTimer);
+      let capMs = 6000;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (AUDIO && Ctx && Ctx.prototype && Ctx.prototype.createAnalyser) {
+        // stop when the owner stops talking, not after a fixed timer
+        try {
+          voice.audioCtx = voice.audioCtx || new Ctx();
+          const src = voice.audioCtx.createMediaStreamSource(stream);
+          const analyser = voice.audioCtx.createAnalyser(); analyser.fftSize = 1024; src.connect(analyser);
+          const buf = new Uint8Array(analyser.fftSize), vad = AUDIO.createVad(), t0 = now();
+          const poll = setInterval(() => {
+            analyser.getByteTimeDomainData(buf);
+            if (recorder.state !== 'recording') { clearInterval(poll); return; }
+            if (vad.feed(AUDIO.rmsOf(buf), now() - t0) === 'done') { clearInterval(poll); recorder.stop(); }
+          }, 100);
+          capMs = 16000;
+        } catch (e) { /* analyser unavailable: the fixed timer below still ends the recording */ }
+      }
       voice.recordingTimer = setTimeout(() => {
         if (recorder.state === 'recording') recorder.stop();
-      }, 6000);
+      }, capMs);
     } catch (error) {
       voice.listening = false;
       voice.mode = false;
@@ -1699,8 +1717,26 @@
     }
   }
 
+  /* Providers with no /audio/transcriptions (Gemini) can still hear: the
+     recording goes through the chat endpoint as WAV and comes back as text. */
+  async function transcribeViaChat(blob) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!AUDIO || !Ctx) throw new Error('Is browser me awaaz decode nahi ho paati — Chrome par kholo.');
+    voice.audioCtx = voice.audioCtx || new Ctx();
+    const wav = await AUDIO.blobToWav(blob, voice.audioCtx);
+    if (wav.seconds < 0.4) return '';
+    const lang = voice.lang.startsWith('hi') ? 'Hindi / Hinglish' : 'English';
+    const text = await callProvider([{ role: 'user', content: [
+      { type: 'text', text: `Transcribe this audio exactly as spoken (${lang}). Keep the speaker's own language, and Roman letters if they spoke Hinglish. Output only the transcript. If there is no clear speech, output exactly: [silence]` },
+      { type: 'input_audio', input_audio: { data: wav.base64, format: wav.format } }
+    ] }], { maxTokens: 300, temperature: 0 });
+    const out = String(text).trim();
+    return /^\[?\s*silence\s*\]?\.?$/i.test(out) ? '' : out.replace(/^["'“]|["'”]$/g, '');
+  }
+
   async function transcribeWithProvider(blob) {
     const cfg = state.cfg;
+    if (cfg && (cfg.transcribe === 'chat' || (!cfg.transcribe && isGemini(cfg)))) return transcribeViaChat(blob);
     if (!cfg || !cfg.transcribe) {
       throw new Error('Voice samajhne ke liye "Voice-to-text model" Setup me bharna hoga (jaise whisper-1).');
     }

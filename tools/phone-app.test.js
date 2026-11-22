@@ -192,6 +192,7 @@ async function boot(options = {}) {
   window.eval(fs.readFileSync(path.join(ROOT, 'agent.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'office.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'evals.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'audio.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'proactive.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'google.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'tools.js'), 'utf8'));
@@ -1244,6 +1245,26 @@ function submit(window, text) {
   b.$('btnEval').click(); await wait(1500);
   ok(/\d+\/16 sahi/.test(b.$('evalResult').textContent), 'the self-test reports a score', b.$('evalResult').textContent);
   ok(JSON.parse(b.window.localStorage.getItem('jenni_evals_v1') || '[]').length === 1, 'self-test history is kept');
+  b.dom.window.close();
+
+
+  /* ── Gemini voice input without browser speech recognition ─────────────── */
+  const GEMINI = { provider: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.5-flash', transcribe: '', apiKey: 'AIzaFakeFakeFakeFake12345' };
+  b = await boot({ cfg: GEMINI, script: ['kal ka din kaisa rahega', 'Achha rahega, tayyar ho jao.'] });
+  b.window.SpeechRecognition = undefined; b.window.webkitSpeechRecognition = undefined;
+  b.window.navigator.mediaDevices = { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) };
+  b.window.MediaRecorder = class { constructor() { this.state = 'inactive'; this.mimeType = 'audio/webm'; } start() { this.state = 'recording'; setTimeout(() => { this.state = 'inactive'; this.ondataavailable({ data: new b.window.Blob([new Uint8Array(4000)]) }); this.onstop(); }, 40); } stop() {} };
+  b.window.Blob.prototype.arrayBuffer = async function () { return new ArrayBuffer(8); };
+  b.window.AudioContext = class { async decodeAudioData() { return { numberOfChannels: 1, sampleRate: 16000, getChannelData: () => new Float32Array(16000).fill(0.1) }; } };
+  b.$('btnVoice').click();
+  await wait(900);
+  const audioCall = b.calls.find((c) => c.url.includes('chat/completions'));
+  const audioBody = JSON.parse(audioCall.options.body);
+  const part = audioBody.messages[0].content.find((x) => x.type === 'input_audio');
+  ok(part && part.input_audio.format === 'wav' && Buffer.from(part.input_audio.data, 'base64').slice(0, 4).toString() === 'RIFF', 'Gemini hears the recording as WAV through the chat endpoint');
+  ok(!b.calls.some((c) => c.url.includes('/audio/transcriptions')), 'no /audio/transcriptions call is made for Gemini');
+  ok([...b.window.document.querySelectorAll('.msg--me')].some((m) => m.textContent.includes('kal ka din kaisa rahega')), 'the transcript becomes the owner\'s message');
+  b.window.document.querySelector('.tab[data-tab="chat"]').click();
   b.dom.window.close();
 
   /* ── legacy notes stored under agent.js's key are split out once ───────── */
