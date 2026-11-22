@@ -181,6 +181,88 @@ test('proxies chat to the configured provider and returns only its assistant rep
   }
 });
 
+test('an upstream 503 is retried, then reported as the provider\'s fault with a retry hint', async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ error: { message: 'overloaded' } }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json', 'Retry-After': '1' }
+    });
+  };
+  try {
+    await withServer(TEST_ENV, async (port) => {
+      const result = await request(port, '/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'Hello' }] })
+      });
+      assert.ok(calls > 1, `the upstream 503 was retried (calls: ${calls})`);
+      assert.equal(result.status, 503);
+      assert.equal(result.json.error.code, 'AI_PROVIDER_OVERLOADED');
+      assert.equal(result.json.error.retryable, true);
+      assert.match(result.json.error.message, /overloaded or down/i);
+      assert.equal(result.json.error.providerStatus, 503);
+      assert.equal(result.headers['retry-after'] !== undefined, true, 'Retry-After is passed on');
+      assert.equal(result.text.includes(TEST_ENV.AI_API_KEY), false);
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('an upstream 503 that clears on retry returns the answer, not an error', async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    if (calls === 1) return new Response('busy', { status: 503 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'Second try worked.' } }] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+  try {
+    await withServer(TEST_ENV, async (port) => {
+      const result = await request(port, '/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'Hello' }] })
+      });
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.json, { reply: 'Second try worked.' });
+      assert.equal(calls, 2);
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('an auth failure is never retried — repeating a bad key wastes quota', async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    return new Response('nope', { status: 401 });
+  };
+  try {
+    await withServer(TEST_ENV, async (port) => {
+      const result = await request(port, '/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'Hello' }] })
+      });
+      assert.equal(calls, 1);
+      assert.equal(result.status, 502);
+      assert.equal(result.json.error.code, 'AI_AUTH_ERROR');
+      assert.equal(result.json.error.retryable, false);
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('does not leak provider error bodies or secret keys', async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => new Response(`sensitive provider detail ${TEST_ENV.AI_API_KEY}`, { status: 401 });

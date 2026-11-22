@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const providers = require('./public/providers.js');
+const NET = require('./docs/net.js');
 const brain = require('./docs/brain.js');
 const { createConnections, ConnectionError } = require('./connections.js');
 
@@ -54,10 +55,13 @@ function lastUserText(messages) {
 }
 
 class HttpError extends Error {
-  constructor(status, code, message) {
+  constructor(status, code, message, extra = null) {
     super(message);
     this.status = status;
     this.code = code;
+    // Retry metadata travels to the client so it can decide honestly whether
+    // "phir try karo" will help or just fail again.
+    if (extra && typeof extra === 'object') Object.assign(this, extra);
   }
 }
 
@@ -258,7 +262,42 @@ function providerHeaders(config, extra = {}) {
   return headers;
 }
 
+/* Provider outages are the normal case, not the exception: a 503 from a shared
+   endpoint usually clears within seconds. Retry a small number of times with the
+   same jittered backoff the browser uses, honour Retry-After, and only then turn
+   it into an error the client can display. Auth, model and validation errors are
+   never retried — repeating them burns the user's quota for nothing. */
+const PROVIDER_RETRIES = 2;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function fetchProvider(config, endpoint, options) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= PROVIDER_RETRIES; attempt += 1) {
+    try {
+      return await fetchProviderOnce(config, endpoint, options);
+    } catch (error) {
+      lastError = error;
+      // Only errors we explicitly tagged retryable are repeated. A 4xx (bad key,
+      // retired model, bad request) is conclusive: the same call fails again.
+      if (error.retryable !== true) break;
+      const plan = NET.retryPlan(
+        { code: error.code, status: error.providerStatus, retryAfterMs: error.retryAfterMs },
+        attempt,
+        { maxAttempts: PROVIDER_RETRIES, baseMs: 500, capMs: 4000, maxWaitMs: 6000, minWaitMs: 200 }
+      );
+      if (!plan.retry) break;
+      await sleep(plan.waitMs);
+    }
+  }
+  // Tell the client whether trying again later is worthwhile at all. An explicit
+  // `retryable: false` from the mapping is kept: the HTTP status we return to the
+  // browser (502) is not the provider's status (401), so guessing here would lie.
+  if (lastError && lastError.retryable === undefined) lastError.retryable = NET.isRetryable({ status: lastError.providerStatus });
+  throw lastError;
+}
+
+async function fetchProviderOnce(config, endpoint, options) {
   let response;
   try {
     response = await fetch(providerUrl(config, endpoint), {
@@ -267,32 +306,41 @@ async function fetchProvider(config, endpoint, options) {
     });
   } catch (error) {
     if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-      throw new HttpError(504, 'AI_TIMEOUT', 'The AI provider took too long to respond. Please try again.');
+      throw new HttpError(504, 'AI_TIMEOUT', 'The AI provider took too long to respond. Please try again.', { retryable: true });
     }
-    throw new HttpError(502, 'AI_UNAVAILABLE', 'Could not reach the configured AI provider. Check the server connection and AI_BASE_URL.');
+    throw new HttpError(502, 'AI_UNAVAILABLE', 'Could not reach the configured AI provider. Check the server connection and AI_BASE_URL.', { retryable: true });
   }
 
   if (!response.ok) {
+    const retryAfterMs = NET.parseRetryAfter(response.headers.get('retry-after'), Date.now());
+    const extra = { retryable: NET.RETRYABLE_STATUS.has(response.status), providerStatus: response.status };
+    if (retryAfterMs !== null) extra.retryAfterMs = retryAfterMs;
+
     if (response.status === 401 || response.status === 403) {
-      throw new HttpError(502, 'AI_AUTH_ERROR', 'The AI provider rejected its server-side credentials. Check AI_API_KEY.');
+      throw new HttpError(502, 'AI_AUTH_ERROR', 'The AI provider rejected its server-side credentials. Check AI_API_KEY.', { retryable: false, providerStatus: response.status });
     }
     if (response.status === 429) {
-      throw new HttpError(429, 'AI_RATE_LIMITED', 'The AI provider is rate-limiting requests. Wait a moment and try again.');
+      throw new HttpError(429, 'AI_RATE_LIMITED', 'The AI provider is rate-limiting requests. Wait a moment and try again.', extra);
     }
     if (response.status === 404 && endpoint === 'audio/transcriptions') {
-      throw new HttpError(502, 'TRANSCRIPTION_UNAVAILABLE', 'This AI provider does not offer the configured audio transcription endpoint. Use browser speech recognition or type your message.');
+      throw new HttpError(502, 'TRANSCRIPTION_UNAVAILABLE', 'This AI provider does not offer the configured audio transcription endpoint. Use browser speech recognition or type your message.', { retryable: false });
     }
     if (response.status === 404 && endpoint === 'chat/completions') {
       // A retired model ID is the most common cause: providers answer 404 for it.
-      throw new HttpError(502, 'AI_MODEL_NOT_FOUND', `The AI provider has no model "${config.model}" (HTTP 404). The model may be retired — pick a current one from the provider's model list.`);
+      throw new HttpError(502, 'AI_MODEL_NOT_FOUND', `The AI provider has no model "${config.model}" (HTTP 404). The model may be retired — pick a current one from the provider's model list.`, { retryable: false });
     }
-    throw new HttpError(502, 'AI_PROVIDER_ERROR', `The AI provider returned an error (HTTP ${response.status}). Check its URL, model, and account configuration.`);
+    if (response.status >= 500) {
+      // Overloaded upstream (503/502/500) — say so plainly instead of asking the
+      // user to check their configuration, which is almost never the problem.
+      throw new HttpError(503, 'AI_PROVIDER_OVERLOADED', `The AI provider is temporarily overloaded or down (HTTP ${response.status}). This is on their side, not yours — try again in a few seconds.`, extra);
+    }
+    throw new HttpError(502, 'AI_PROVIDER_ERROR', `The AI provider returned an error (HTTP ${response.status}). Check its URL, model, and account configuration.`, extra);
   }
 
   try {
     return await response.json();
   } catch (error) {
-    throw new HttpError(502, 'AI_INVALID_RESPONSE', 'The AI provider returned an unreadable response.');
+    throw new HttpError(502, 'AI_INVALID_RESPONSE', 'The AI provider returned an unreadable response.', { retryable: true });
   }
 }
 
@@ -680,7 +728,16 @@ function createAppServer({ env = process.env } = {}) {
       const code = known ? error.code : 'INTERNAL_ERROR';
       const message = known ? error.message : 'The server could not complete this request.';
       if (!known) console.error('Request failed:', error.message);
-      return jsonResponse(res, status, { error: { code, message } });
+      const payload = { code, message };
+      // Honest retry hints: whether trying again helps, and after how long.
+      if (known && typeof error.retryable === 'boolean') payload.retryable = error.retryable;
+      if (known && Number.isFinite(error.retryAfterMs)) payload.retryAfterMs = error.retryAfterMs;
+      if (known && Number.isFinite(error.providerStatus)) payload.providerStatus = error.providerStatus;
+      const headers = {};
+      if (payload.retryable && Number.isFinite(payload.retryAfterMs)) {
+        headers['Retry-After'] = String(Math.max(1, Math.ceil(payload.retryAfterMs / 1000)));
+      }
+      return jsonResponse(res, status, { error: payload }, headers);
     }
   });
 

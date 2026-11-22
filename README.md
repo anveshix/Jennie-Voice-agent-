@@ -260,11 +260,22 @@ so it travels with whichever provider you plug in.
   and thinking tokens are billed against `max_tokens`, which is why replies used to time out or come back
   empty. Requests to `generativelanguage.googleapis.com` now send `reasoning_effort: minimal` (or `low` for
   3.8 Flash) and add 1200 tokens of headroom. Other providers get no Gemini-only fields.
-- **Self-healing sends.** Timeout, network drop, HTTP 5xx, 429 and empty bodies retry automatically (2 tries,
-  backoff). A `finish_reason: length` answer is continued and stitched rather than discarded.
-- **Honest, short failures.** After retries the bubble says one line ("Jawab nahi aaya. Provider ne 60 second
-  me jawab nahi diya.") and offers **Phir try karo**, which resends the same question — no more stacked
-  "Maaf karo…" paragraphs, and failed bubbles are never replayed to the model.
+- **Self-healing sends.** Timeout, network drop, HTTP 5xx, 429 and empty bodies retry automatically with
+  jittered, escalating backoff (3 tries typed, 2 in voice mode so a turn cannot stall), and honour the
+  provider's `Retry-After`. A `finish_reason: length` answer is continued and stitched rather than discarded.
+  The same rules live in `docs/net.js`, which the Node proxy in `server.js` also loads — retries, the wait
+  between them and the circuit breaker (3 dead turns → one cheap probe per turn) behave identically in both halves.
+- **503 is the provider's fault, and it says so.** A provider-side 5xx no longer collapses into
+  "Provider ki taraf se gadbad (HTTP 503)". After the retries the bubble says the key is not at fault, when to
+  send again, and keeps **Phir try karo**. Setup → *Backup provider* stores a spare key for another provider
+  (inside the same PIN vault, never in a backup file); while the main one is down the answer simply comes from
+  the spare, with one toast saying so.
+- **Honest, short failures.** The bubble says one line and offers **Phir try karo**, which resends the same
+  question — no more stacked "Maaf karo…" paragraphs, and failed bubbles are never replayed to the model.
+- **Two-way voice, not a microphone that keeps dying.** After every answer the mic reopens (the scheduler waits
+  out speaking/busy instead of giving up), a spoken sentence interrupts a turn that is still thinking, "Chup"
+  stops the stream itself, and a failed turn is spoken once and then the mic reopens — after three failures the
+  loop backs off to 10 s instead of spinning. Spoken turns get a hard 30 s budget.
 
 ## Clearing the chat is a lesson, not a reset
 

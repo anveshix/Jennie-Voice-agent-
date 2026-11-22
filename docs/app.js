@@ -71,6 +71,7 @@
   const PRO = window.JENNI_PROACTIVE;
   const EVALS = window.JENNI_EVALS;
   const AGENT = window.JENNI_AGENT || {};
+  const NET = window.JENNI_NET || null;      // retry/backoff/circuit rules, shared with the server
 
   /* Long-term memory and learned skills. Both are plain localStorage data, so
      they show up in the UI, survive reloads and vanish on "Erase everything".
@@ -185,7 +186,11 @@
     busy: false,
     listening: false,
     recorder: null,
-    chunks: []
+    chunks: [],
+    /* 3 bad turns in a row means the provider is genuinely down. While the
+       breaker is open only one cheap probe goes out per turn, so a 503 storm is
+       not multiplied by every retry this phone would otherwise send. */
+    netBreaker: NET ? NET.createBreaker({ threshold: 3, cooldownMs: 25000 }) : null
   };
 
   /* ══════════════════════════════════════════════════════════════ CONFIG */
@@ -318,25 +323,42 @@
       reader.read().then((r) => { clearTimeout(t); resolve(r); }, (e) => { clearTimeout(t); reject(e); });
     });
     let buf = '', text = '', finish = '';
-    for (;;) {
-      const { done, value } = await readWithIdle();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (!line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (!data || data === '[DONE]') continue;
-        let json;
-        try { json = JSON.parse(data); } catch (e) { continue; }
-        const choice = json.choices && json.choices[0];
-        if (!choice) continue;
-        if (choice.finish_reason) finish = choice.finish_reason;
-        const delta = choice.delta && choice.delta.content;
-        if (delta) { text += delta; options.onDelta(delta); }
+    try {
+      for (;;) {
+        const { done, value } = await readWithIdle();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === '[DONE]') continue;
+          let json;
+          try { json = JSON.parse(data); } catch (e) { continue; }
+          const choice = json.choices && json.choices[0];
+          if (!choice) continue;
+          if (choice.finish_reason) finish = choice.finish_reason;
+          const delta = choice.delta && choice.delta.content;
+          if (delta) { text += delta; options.onDelta(delta); }
+        }
       }
+    } catch (error) {
+      // A stream that dies halfway must not throw away the words already heard:
+      // hand them to withRetries as a truncation, which can fetch only the tail.
+      if (error && error.name === 'AbortError') throw error;
+      const partial = text.trim();
+      if (partial) {
+        const cut = new Error('Provider se stream beech me toot gaya.');
+        cut.code = 'TRUNCATED';
+        cut.partial = partial;
+        throw cut;
+      }
+      if (error && error.code === 'TIMEOUT') throw error;
+      const lost = new Error('Provider se connection toot gaya.');
+      lost.code = 'NETWORK';
+      throw lost;
     }
     const out = text.trim();
     if (!out) {
@@ -355,13 +377,16 @@
   }
 
   async function callProvider(messages, options = {}) {
-    const cfg = state.cfg;
+    const cfg = options.cfg || state.cfg;
     if (!cfg || !cfg.apiKey) throw new Error('Pehle Setup me API key daalo.');
     const model = options.model || cfg.model;
 
     const controller = new AbortController();
     const started = Date.now();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs || 60000);
+    // Voice can interrupt a turn that is still streaming; keep a handle so a new
+    // sentence cancels the old request instead of being dropped.
+    state.turnAbort = controller;
 
     try {
       const response = await fetch(cfg.baseUrl + '/chat/completions', {
@@ -384,27 +409,36 @@
 
       if (!response.ok) {
         const detail = payload && payload.error && (payload.error.message || payload.error.code);
+        const asked = NET ? NET.parseRetryAfter(response.headers.get('retry-after'), Date.now()) : null;
+        const withMeta = (error) => {
+          error.status = response.status;
+          if (asked !== null && asked !== undefined) error.retryAfterMs = asked;
+          return error;
+        };
         if (response.status === 401 || response.status === 403) {
-          throw new Error('Key galat ya expired hai. Provider dashboard se nayi key lo.');
+          // a key/base-URL mismatch is a setup problem, not a provider outage
+          const auth = withMeta(new Error('Key galat ya expired hai. Provider dashboard se nayi key lo.'));
+          auth.code = 'AUTH';
+          throw auth;
         }
         if (response.status === 429) {
-          const busy = new Error('Provider ki limit lag gayi (429). Thodi der baad try karo, ya doosra provider chuno.');
+          const busy = withMeta(new Error('Provider ki limit lag gayi (429). Thodi der baad try karo, ya doosra provider chuno.'));
           busy.code = 'BUSY';              // same "worth one more try" family
           throw busy;
         }
         if (response.status >= 500) {
-          const down = new Error(`Provider ki taraf se gadbad (HTTP ${response.status}).`);
+          const down = withMeta(new Error(`Provider ki taraf se gadbad (HTTP ${response.status}).`));
           down.code = 'HTTP_5XX';
           throw down;
         }
         if (response.status === 404) {
           // A 404 from an OpenAI-compatible endpoint almost always means the
           // model ID was retired or the base URL has an extra path segment.
-          const error = new Error(`Model "${model}" provider par nahi mila (404). Ye model band ho gaya ho sakta hai — naya model chuno.`);
+          const error = withMeta(new Error(`Model "${model}" provider par nahi mila (404). Ye model band ho gaya ho sakta hai — naya model chuno.`));
           error.code = 'MODEL_NOT_FOUND';
           throw error;
         }
-        throw new Error(detail || `Provider ne error diya (HTTP ${response.status}).`);
+        throw withMeta(new Error(detail || `Provider ne error diya (HTTP ${response.status}).`));
       }
 
       const choice = payload && payload.choices && payload.choices[0];
@@ -433,6 +467,11 @@
       return text;
     } catch (error) {
       if (error.name === 'AbortError') {
+        if (controller.__cancelled) {
+          const stopped = new Error('Ruk gaya.');
+          stopped.code = 'CANCELLED';
+          throw stopped;
+        }
         const timeout = new Error('Provider ne 60 second me jawab nahi diya. Ek baar phir bhejo.');
         timeout.code = 'TIMEOUT';
         throw timeout;
@@ -445,64 +484,237 @@
       throw error;
     } finally {
       clearTimeout(timer);
+      if (state.turnAbort === controller) state.turnAbort = null;
     }
   }
 
-  /* Errors worth one more attempt on their own — the network blipped, the
-     provider was busy, or the answer got cut off mid-way. */
-  const RETRYABLE = new Set(['TIMEOUT', 'NETWORK', 'EMPTY_REPLY', 'TRUNCATED', 'HTTP_5XX', 'BUSY']);
+  /** Stop the turn that is in flight right now (voice interruption / Chup). */
+  function interruptTurn() {
+    const controller = state.turnAbort;
+    if (!controller) return false;
+    controller.__cancelled = true;          // checked in callProvider's AbortError branch
+    try { controller.abort(); } catch (error) { /* already gone */ }
+    return true;
+  }
+
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /* Errors worth one more attempt on their own — the network blipped, the
+     provider was busy, or the answer got cut off mid-way. The rules live in
+     net.js so the server proxy classifies a 503 exactly like this app does;
+     the local copy keeps an old cached shell working if net.js is missing. */
+  const RETRYABLE = NET ? NET.RETRYABLE : new Set(['TIMEOUT', 'NETWORK', 'EMPTY_REPLY', 'TRUNCATED', 'HTTP_5XX', 'BUSY']);
+  const retryableLocal = (error) => Boolean(error) && RETRYABLE.has(error.code);
+
+  /* Can a different provider answer for this one right now? Only when the user
+     has stored a spare key, the current provider is the one failing, and the
+     failure is a provider-side outage — not a bad key or a retired model.
+     Spare keys ride inside the saved config, so the PIN vault seals them too. */
+  function fallbackTarget(error, options) {
+    const code = error && error.code;
+    // An expired key on one provider is exactly what a spare provider is for.
+    if (!(code === 'HTTP_5XX' || code === 'BUSY' || code === 'TIMEOUT' || code === 'NETWORK' || code === 'AUTH')) return null;
+    const cfg = state.cfg || {};
+    const extra = cfg.fallbackKeys && typeof cfg.fallbackKeys === 'object' ? cfg.fallbackKeys : {};
+    const preferred = options && options.fallbackProvider;
+    const order = [preferred, cfg.fallbackProvider].concat(Object.keys(PRESETS));
+    const seen = new Set();
+    for (const id of order) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      if (id === cfg.provider || id === 'custom' || !PRESETS[id]) continue;
+      const key = extra[id];
+      if (!key || String(key).length < 8) continue;
+      const preset = PRESETS[id];
+      return {
+        provider: id,
+        label: preset.label,
+        apiKey: key,
+        baseUrl: preset.baseUrl,
+        model: preset.model,
+        transcribe: preset.transcribe || ''
+      };
+    }
+    return null;
+  }
+
+  /** Save/remove a spare key for another provider (used when the main one is down). */
+  function saveSpareKey(provider, key) {
+    if (!provider || !PRESETS[provider] || provider === 'custom') return null;
+    const cfg = Object.assign({}, state.cfg || {});
+    const keys = Object.assign({}, cfg.fallbackKeys || {});
+    const value = String(key || '').trim();
+    if (/•/.test(value) && keys[provider]) return state.cfg;      // masked field, unchanged
+    if (value) keys[provider] = value;
+    else delete keys[provider];
+    cfg.fallbackKeys = keys;
+    if (!Object.keys(keys).length) {
+      cfg.fallbackProvider = '';
+    } else if (!keys[cfg.fallbackProvider]) {
+      cfg.fallbackProvider = Object.keys(keys)[0];
+    }
+    saveConfig(cfg);
+    return cfg;
+  }
+
+  /* All providers share the same OpenAI-compatible body shape, so a fallback
+     only needs a different config object, not a different code path. */
+  function cfgWith(base, override) {
+    return Object.assign({}, base, {
+      provider: override.provider,
+      apiKey: override.apiKey,
+      baseUrl: override.baseUrl,
+      model: override.model,
+      transcribe: override.transcribe
+    });
+  }
 
   /**
    * Wraps callProvider with the recovery that the app promises:
+   *   timeout / network / 5xx / busy → escalating jittered backoff, honouring
+   *     Retry-After; then a second provider if one is configured
    *   404 retired model  → retry once on the preset's current model, save it
-   *   timeout / network / 5xx / empty → retry up to twice with a short backoff
    *   truncated answer   → ask for the rest and stitch it together
+   *
+   * In voice mode the whole thing is on a deadline so a dead provider cannot
+   * leave the user staring at a silent mic for a minute.
    */
   async function askProvider(messages, options = {}) {
-    try {
-      return await withRetries(messages, options);
-    } catch (error) {
-      if (error.code !== 'MODEL_NOT_FOUND' || options.noRetry) throw error;
-      const cfg = state.cfg || {};
-      const preset = PRESETS[cfg.provider];
-      if (!preset || !preset.model || preset.model === cfg.model) throw error;
-
-      const reply = await withRetries(messages, Object.assign({}, options, { model: preset.model, noRetry: true }));
-      saveConfig(Object.assign({}, cfg, { model: preset.model }));
-      if (voice.mode) stopListening();
-      toast(`Purana model band tha — ab "${preset.model}" chal raha hai`, false);
-      return reply;
+    const startedAt = Date.now();
+    const deadline = options.deadline || startedAt + (voice.mode ? 30000 : 75000);
+    const breaker = state.netBreaker;
+    // Circuit open → one probe only. If it fails the error carries the wait.
+    const opts = breaker && breaker.isOpen() && options.retries === undefined
+      ? Object.assign({}, options, { retries: 0 })
+      : options;
+    const first = await attemptChain(messages, opts, deadline, startedAt);
+    if (first.reply !== undefined) return first.reply;
+    if (breaker && breaker.isOpen() && first.error && !first.error.retryAfterMs) {
+      // Cooldown already running → tell the user how long, do not fake a retry.
+      first.error.retryAfterMs = breaker.openFor();
     }
+    return recoverFrom(messages, opts, first.error, deadline, startedAt);
   }
 
-  async function withRetries(messages, options) {
+  /* One provider, with retries. Returns {reply} or {error} — never throws, so
+     the caller can decide whether a second provider is worth trying. */
+  const cancelledError = () => Object.assign(new Error('Ruk gaya.'), { code: 'CANCELLED' });
+  const isStale = (options) => options.turnToken !== undefined && options.turnToken !== state.turnSeq;
+
+  async function attemptChain(messages, options, deadline, startedAt) {
+    const breaker = state.netBreaker;
     let attempt = 0;
     for (;;) {
+      if (isStale(options)) return { error: cancelledError() };
       try {
-        return await callProvider(messages, options);
+        const cfg = options.useConfig || state.cfg;
+        const reply = await callProvider(messages, Object.assign({}, options, { cfg }));
+        if (breaker && cfg === state.cfg) breaker.ok();
+        return { reply };
       } catch (error) {
         if (error.code === 'TRUNCATED' && error.partial) {
-          // keep what we have and ask for the tail, so a long application still
-          // arrives complete instead of failing outright
-          const tail = await callProvider(
-            messages.concat([
-              { role: 'assistant', content: error.partial },
-              { role: 'user', content: 'Jahan chhoda tha wahin se aage likho — sirf bacha hua hissa, dohrana nahi.' }
-            ]),
-            Object.assign({}, options, { maxTokens: 900 })
-          );
-          return (error.partial + '\n' + tail).trim();
+          try {
+            const tail = await callProvider(
+              messages.concat([
+                { role: 'assistant', content: error.partial },
+                { role: 'user', content: 'Jahan chhoda tha wahin se aage likho — sirf bacha hua hissa, dohrana nahi.' }
+              ]),
+              Object.assign({}, options, { maxTokens: 900, cfg: options.useConfig || state.cfg })
+            );
+            return { reply: (error.partial + '\n' + tail).trim() };
+          } catch (tailError) {
+            return { reply: error.partial };       // half an answer beats none
+          }
         }
-        const canRetry = RETRYABLE.has(error.code) && attempt < 2 && !options.noRetry;
-        if (!canRetry) throw error;
+        // A key/model problem is about *this* provider — a fallback may still work,
+        // but repeating the same request against the same provider never helps.
+        if (error.code === 'AUTH' || error.code === 'MODEL_NOT_FOUND') {
+          if (breaker && cfg === state.cfg) breaker.fail(error);
+          return { error };
+        }
+
+        const plan = NET
+          ? NET.retryPlan(error, attempt, {
+            maxAttempts: options.retries === undefined ? (voice.mode ? 2 : 3) : options.retries,
+            baseMs: 600,
+            capMs: 6000,
+            maxWaitMs: voice.mode ? 6000 : 12000,
+            minWaitMs: 250,
+            deadline,
+            now: Date.now()
+          })
+          : { retry: retryableLocal(error) && attempt < 2, waitMs: 700 * (attempt + 1) };
+
+        const outage = plan.retry || retryableLocal(error) || error.code === 'AUTH';
+        if (outage && breaker && cfg === state.cfg) breaker.fail(error);
+        if (!plan.retry) return { error, attempts: attempt + 1 };
         attempt += 1;
         if (options.onReset) options.onReset();     // drop a half-streamed answer before retrying
-        setStatus('busy');
-        await sleep(700 * attempt);
+        // Say what is happening: a silent spinner during a 503 is what "jawab
+        // nahi aaya" felt like. one short line, then keep trying.
+        setStatus('busy', `${providerName()} busy — dobara koshish (${attempt + 1}/${(options.retries === undefined ? (voice.mode ? 2 : 3) : options.retries) + 1})`);
+        if (options.onRetry) options.onRetry(error, attempt, plan.waitMs);
+        await sleep(plan.waitMs);
+        if (isStale(options)) return { error: cancelledError() };   // cancelled mid-backoff
       }
     }
   }
+
+  /* Model retired → its preset's current model. Outage → another provider the
+     user already stored a key for. Anything else → the error itself. */
+  async function recoverFrom(messages, options, error, deadline, startedAt) {
+    if (error.code === 'MODEL_NOT_FOUND' && !options.noRetry) {
+      const cfg = state.cfg || {};
+      const preset = PRESETS[cfg.provider];
+      if (preset && preset.model && preset.model !== cfg.model) {
+        const retry = await attemptChain(messages, Object.assign({}, options, {
+          model: preset.model, noRetry: true, useConfig: Object.assign({}, cfg, { model: preset.model })
+        }), deadline, startedAt);
+        if (retry.reply !== undefined) {
+          saveConfig(Object.assign({}, cfg, { model: preset.model }));
+          if (voice.mode) stopListening();
+          toast(`Purana model band tha — ab "${preset.model}" chal raha hai`, false);
+          return retry.reply;
+        }
+        return throwLate(retry.error);
+      }
+    }
+
+    const alt = options.noFallback ? null : fallbackTarget(error);
+    if (alt && Date.now() < deadline) {
+      toast(`${providerName()} par dikkat — ${alt.label} se jawab la rahi hoon`, true);
+      const retry = await attemptChain(messages, Object.assign({}, options, {
+        useConfig: cfgWith(state.cfg || {}, alt),
+        noFallback: true,
+        noRetry: false,
+        retries: 1
+      }), deadline, startedAt);
+      if (retry.reply !== undefined) {
+        state.netFallbackAt = Date.now();
+        return retry.reply;
+      }
+    }
+    return throwLate(error);
+  }
+
+  function throwLate(error) {
+    if (!error.__late) { error.__late = true; }
+    throw error;
+  }
+
+  /* One line a frustrated user can act on. A provider outage gets a plain
+     "their side, not yours" sentence plus how long to wait, instead of a bare
+     "Kuch galat hua" that made people think their key was broken. */
+  function outageSentence(error) {
+    const waitMs = Number(error && error.retryAfterMs);
+    const wait = Number.isFinite(waitMs) && waitMs >= 1000
+      ? `${Math.max(1, Math.round(waitMs / 1000))} second`
+      : 'thodi der';
+    const alt = fallbackTarget(error);
+    return (alt ? `Sab provider busy hain. ` : 'Provider ki taraf se dikkat hai. ')
+      + `Ye aapki key ki galti nahi — ${wait} baad bhejo, ya doosra provider chuno.`;
+  }
+
 
   /* Jenni ka character. Ye sach me prompt hai, isliye concrete rakha hai:
      age + tone + rhythm + humour ke rules — "friendly assistant" jaise
@@ -1115,7 +1327,10 @@
       case 'NETWORK': return 'Internet ya provider tak nahi pahunch paye.';
       case 'EMPTY_REPLY': return 'Provider ne khali jawab bheja.';
       case 'TRUNCATED': return 'Jawab beech me kat gaya.';
+      case 'BUSY': return 'Provider ki limit lag gayi. ' + outageSentence(error);
+      case 'HTTP_5XX': return outageSentence(error);
       case 'MODEL_NOT_FOUND': return error.message;
+      case 'AUTH': return error.message;
       default: return (error && error.message) || 'Kuch galat hua.';
     }
   }
@@ -1155,7 +1370,16 @@
 
   async function send(text, options = {}) {
     const clean = String(text || '').trim();
-    if (!clean || state.busy) return;
+    if (!clean) return;
+    if (state.busy) {
+      // Talking over her counts as talking *to* her: only an explicit spoken
+      // sentence may pre-empt a turn, and only if the new turn then owns the
+      // busy flag (see `token` below), never while the recogniser is just
+      // echoing her own voice back.
+      if (!options.fromVoice || !options.interrupt) return;
+      interruptTurn();
+      state.busy = false;                 // the old turn's finally() will see a newer token
+    }
     if (!state.cfg || !state.cfg.apiKey) {
       openSheet('setup');
       setResult('setupResult', 'Pehle API key daal ke Save dabao.', 'error');
@@ -1174,9 +1398,18 @@
     if (PRO) secSet(LS.activity, PRO.recordIntent(secGet(LS.activity, {}), PRO.intentOf(clean), now()));
 
     state.busy = true;
+    // Turn token: an interrupted turn must not clear the flag that the newer
+    // turn just set, or two replies would interleave in the transcript.
+    const token = (state.turnSeq = (state.turnSeq || 0) + 1);
     $('input').value = '';
     autoGrow($('input'));
     $('btnSend').disabled = true;
+    // A spoken turn gets a hard 30 s budget: past that, the loop should hear the
+    // user again rather than sit in a silent "soch rahi hai" forever.
+    let voiceGuard = null;
+    if (voice.mode && options.fromVoice) {
+      voiceGuard = setTimeout(() => { if (state.busy) interruptTurn(); }, VOICE_TURN_MS);
+    }
 
     state.chat.push({ role: 'me', text: clean });
     const pending = { role: 'jenni', text: '', pending: true };
@@ -1237,7 +1470,7 @@
       } else {
         reply = await askProvider(
           conversationForApi(clean + repoContext),
-          { maxTokens: voice.mode ? 260 : 600, onDelta, onReset }
+          { maxTokens: voice.mode ? 260 : 600, onDelta, onReset, turnToken: token }
         );
       }
 
@@ -1277,15 +1510,27 @@
       setStatus('ok', providerName() + ' · ' + state.cfg.model);
     } catch (error) {
       pending.pending = false;
-      pending.failed = true;                 // drives the Retry button
-      if (speaker) speaker.reset();
-      pending.text = 'Jawab nahi aaya. ' + plainError(error);
-      pending.retryText = clean;             // the question to send again
-      reply = '';
-      setStatus('error');
+      if (error && error.code === 'CANCELLED') {
+        // The user started a new sentence while this turn was still running.
+        // Drop the half answer quietly; the new turn owns the conversation.
+        pending.cancelled = true;
+        state.chat = state.chat.filter((m) => m !== pending);
+        reply = '';
+      } else {
+        pending.failed = true;                 // drives the Retry button
+        if (speaker) speaker.reset();
+        pending.text = 'Jawab nahi aaya. ' + plainError(error);
+        pending.retryText = clean;             // the question to send again
+        reply = '';
+        setStatus('error');
+        if (voice.mode || options.speakAlways) voiceFailedTurn(error);
+      }
     } finally {
-      state.busy = false;
-      $('btnSend').disabled = false;
+      clearTimeout(voiceGuard);
+      if (state.turnSeq === token) {
+        state.busy = false;
+        $('btnSend').disabled = false;
+      }
       persist('chat');
       paintChat();
     }
@@ -1307,6 +1552,8 @@
         }
       }
     }
+
+    if (reply) voice.deadStreak = 0;               // the provider is answering again
 
     // Voice mode always reads the answer; typed chat only when the user asked.
     if (speaker && speaker.spoken() && reply) await speaker.finish();     // already speaking as it streamed
@@ -1350,8 +1597,18 @@
     lastWake: 0,
     barge: null,
     saying: '',
-    activeSpeaker: null
+    activeSpeaker: null,
+    /* Two-way-loop bookkeeping: consecutive dead turns (provider down, mic
+       refused) and the timer that speaks the "provider down" notice once. */
+    deadStreak: 0,
+    retryNotice: null,
+    lastUserAt: 0,
+    lastSaid: ''
   };
+
+  /* How long a turn may take before the loop is allowed to listen again anyway.
+     Typed chat keeps its own 75 s deadline; only the voice loop uses this. */
+  const VOICE_TURN_MS = 30000;
 
   const BCP = { 'hi-IN': 'hi-IN', 'en-IN': 'en-IN', 'en-US': 'en-US', 'en-GB': 'en-GB' };
 
@@ -1513,7 +1770,23 @@
     onSpeakingChanged(true);
     // A touch quicker and brighter than the phone default (see makeUtterance): a
     // 21-year-old chatting, not a narrator.
-    return speakChunk(clean).then((ok) => { voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false); return ok; });
+    return speakChunk(clean).then((ok) => {
+      voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false);
+      // The answer is over → the mic must reopen even if the caller forgot to
+      // schedule it. That is what makes "bolo → jawab → phir bolo" two-way.
+      resumeListeningAfterSpeech();
+      return ok;
+    });
+  }
+
+  /* Called whenever Jenni stops talking. Restarts the loop unless something
+     newer already took over (another turn, a stop word, voice mode off, or a
+     live barge-in listener that is already hearing the user). */
+  function resumeListeningAfterSpeech() {
+    if (!voice.mode || voice.stopping || state.busy) return;
+    if (voice.speaking) return;
+    if (voice.barge) return;                 // barge-in listener owns the mic
+    scheduleListen(220);
   }
 
   function stopSpeaking() {
@@ -1564,7 +1837,7 @@
         return;
       }
       if (code === 'no-speech' || code === 'aborted') {
-        if (voice.mode) scheduleListen(700);
+        if (voice.mode) scheduleListen(500);
         return;
       }
       if (code === 'network') {
@@ -1578,18 +1851,31 @@
     recognition.onend = () => {
       voice.listening = false;
       paintVoiceUi();
-      // never restart while the loop is being torn down or the answer is playing
-      if (voice.mode && !voice.speaking && !voice.stopping && !state.busy) scheduleListen(420);
+      // The scheduler waits out speaking/busy by itself, so ask immediately:
+      // a 420 ms extra delay on every single turn made the loop feel laggy.
+      if (voice.mode && !voice.stopping) resumeListeningAfterSpeech();
     };
 
     return recognition;
   }
 
+  /* Re-arm until the mic is actually allowed to open. The old version fired
+     once and returned if Jenni was still speaking, so the loop could stay shut
+     after a slow answer — that is what made the conversation feel one-way. */
   function scheduleListen(delay) {
     clearTimeout(voice.restartTimer);
-    voice.restartTimer = setTimeout(() => {
-      if (voice.mode && !state.busy && !voice.speaking) listenOnce();
-    }, delay);
+    const gaveUpAt = Date.now() + 60000;
+    const tick = () => {
+      if (!voice.mode) return;
+      if (voice.stopping) return;
+      if (state.busy || voice.speaking) {
+        if (Date.now() < gaveUpAt) voice.restartTimer = setTimeout(tick, 350);
+        return;
+      }
+      if (voice.listening) return;          // already open, nothing to do
+      listenOnce();
+    };
+    voice.restartTimer = setTimeout(tick, Math.max(0, delay));
   }
 
   function listenOnce() {
@@ -1922,11 +2208,31 @@
 
     voice.cooldownUntil = now() + 400;
     setTranscript(text, true);
-    await send(text, { speakAlways: true, fromVoice: true });
+    // If the previous answer is still being written, this new sentence is the
+    // real intent — stop the old turn instead of ignoring the user.
+    if (state.busy || voice.speaking) {
+      stopSpeaking();
+      interruptTurn();
+    }
+    await send(text, { speakAlways: true, fromVoice: true, interrupt: true });
   }
 
   function isStopWord(text) {
     return /^(ruko|ruk jao|band karo|band kar do|chup|chup ho jao|stop|stop it|shut up|bye|goodbye|alvida|ok bye|thats all|bas|bas karo)$/.test(text);
+  }
+
+  /* A failed turn in voice mode used to end in a silent bubble: the user kept
+     talking into a mic that never reopened. Say it once, then let them speak
+     again — after three dead turns in a row the loop backs off to 10 s so a
+     provider outage does not spin the mic and the network. */
+  function voiceFailedTurn(error) {
+    voice.deadStreak = (voice.deadStreak || 0) + 1;
+    if (voice.deadStreak === 1) {
+      const sentence = plainError(error);
+      speak(sentence).then(() => { if (voice.mode) scheduleListen(500); });
+    } else if (voice.mode) {
+      scheduleListen(Math.min(10000, 1500 * voice.deadStreak));
+    }
   }
 
   /* ── tester ────────────────────────────────────────────────────────────── */
@@ -2645,6 +2951,7 @@
     }
     saveConfig(result.value);
     paintSetupStatus();
+    if (state.paintFallback) state.paintFallback();
     setStatus('ok', providerName() + ' · ' + result.value.model);
     setResult('setupResult', security.enabled ? 'Save ✓ (key encrypted)' : 'Save ✓ — PIN lagao', 'ok');
     return result.value;
@@ -2679,7 +2986,8 @@
     /* Everything that took time to build goes in the backup — the key never does. */
     return {
       drafts: state.drafts,
-      config: state.cfg ? { ...state.cfg, apiKey: '' } : null,
+      // Spare provider keys are secrets too: back them out, never export them.
+      config: state.cfg ? { ...state.cfg, apiKey: '', fallbackKeys: {} } : null,
       drive: state.drive,
       notes: state.notes,
       memory: memory ? memory.all() : [],
@@ -3834,7 +4142,11 @@
     /* hands-free loop */
     $('btnVoice').addEventListener('click', toggleVoiceMode);
     $('btnStopSpeak').addEventListener('click', () => {
+      // "Chup" means quiet for real: stop the stream too, or the rest of the
+      // answer keeps arriving and gets read out anyway.
+      if (voice.activeSpeaker && voice.activeSpeaker.mute) voice.activeSpeaker.mute();
       stopSpeaking();
+      if (state.busy) interruptTurn();
       if (voice.mode) scheduleListen(300);
     });
     $('btnVoiceLang').addEventListener('click', toggleLanguage);
@@ -3968,6 +4280,47 @@
       setStatus('', 'setup needed');
       setResult('setupResult', 'Key delete ho gayi.', 'ok');
     });
+    /* spare (backup) provider: a second key so a 503 on the main one is not fatal */
+    if ($('fbProvider')) {
+      const paintFb = () => {
+        const cfg = state.cfg || {};
+        const keys = cfg.fallbackKeys || {};
+        $('fbProvider').innerHTML = '<option value="">— koi nahi —</option>'
+          + Object.keys(PRESETS).filter((id) => id !== 'custom')
+            .map((id) => `<option value="${id}">${escapeHtml(PRESETS[id].label)}${keys[id] ? ' · saved' : ''}</option>`).join('');
+        $('fbProvider').value = cfg.fallbackProvider && keys[cfg.fallbackProvider] ? cfg.fallbackProvider : (Object.keys(keys)[0] || '');
+        $('fbKey').value = keys[$('fbProvider').value] ? '••••••••' : '';
+        setResult('fbResult', Object.keys(keys).length
+          ? 'Spare ready — main provider down ho to apne aap isse try karungi.'
+          : 'Abhi koi spare key nahi hai.', Object.keys(keys).length ? 'ok' : '');
+      };
+      state.paintFallback = paintFb;
+      paintFb();
+      $('fbProvider').addEventListener('change', () => {
+        const keys = (state.cfg && state.cfg.fallbackKeys) || {};
+        $('fbKey').value = keys[$('fbProvider').value] ? '••••••••' : '';
+      });
+      $('btnFbSave').addEventListener('click', () => {
+        const id = $('fbProvider').value;
+        if (!id) { setResult('fbResult', 'Pehle spare provider chuno.', 'error'); return; }
+        const typed = $('fbKey').value.trim();
+        if (typed.replace(/•/g, '').length === 0 && !(state.cfg && state.cfg.fallbackKeys && state.cfg.fallbackKeys[id])) {
+          setResult('fbResult', 'Spare key daalo.', 'error'); return;
+        }
+        if (typed.length < 8) { setResult('fbResult', 'Key bahut chhoti lag rahi hai.', 'error'); return; }
+        saveSpareKey(id, typed);
+        paintFb();
+        setResult('fbResult', `${PRESETS[id].label} spare key save ho gayi ✓`, 'ok');
+      });
+      $('btnFbClear').addEventListener('click', () => {
+        const id = $('fbProvider').value;
+        if (!id) { setResult('fbResult', 'Pehle spare provider chuno.', 'error'); return; }
+        saveSpareKey(id, '');
+        paintFb();
+        setResult('fbResult', `${PRESETS[id].label} spare key hata di.`, 'ok');
+      });
+    }
+
     $('btnExport').addEventListener('click', exportData);
     $('btnImport').addEventListener('click', () => $('importFile').click());
     $('importFile').addEventListener('change', (event) => {
@@ -4205,7 +4558,17 @@
     }
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(() => { /* offline cache is optional */ });
+        navigator.serviceWorker.register('./sw.js').then((reg) => {
+          // A new worker (new CACHE name) installs with skipWaiting; reload once
+          // so the phone picks up fixed JS instead of running the old shell.
+          reg.addEventListener('updatefound', () => {
+            const fresh = reg.installing;
+            if (!fresh) return;
+            fresh.addEventListener('statechange', () => {
+              if (fresh.state === 'activated' && navigator.serviceWorker.controller) location.reload();
+            });
+          });
+        }).catch(() => { /* offline cache is optional */ });
       });
     }
   }

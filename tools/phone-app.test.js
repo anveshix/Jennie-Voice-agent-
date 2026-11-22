@@ -51,6 +51,8 @@ function wait(ms) {
 async function boot(options = {}) {
   const retired = options.retired || null;
   const script = options.script ? options.script.slice() : null;
+  const spareDown = options.spareDown || null;
+  const spareOk = options.spareOk || null;
   const dom = new JSDOM(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'), {
     url: 'https://anveshix.github.io/Jennie-Voice-agent-/',
     runScripts: 'outside-only',
@@ -115,6 +117,13 @@ async function boot(options = {}) {
     const target = String(url);
     if (target.includes('chat/completions')) {
       if (options.fail) return { ok: false, status: 401, json: async () => ({ error: { message: 'bad key' } }) };
+      // a spare-key call goes to a different host — answer it even while the main one 503s
+      if (options.spareDown && target.includes(options.spareDown)) {
+        return { ok: false, status: 503, headers: { get: () => null }, json: async () => ({ error: { message: 'down' } }) };
+      }
+      if (options.spareOk && target.includes(options.spareOk)) {
+        return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'Backup provider se jawab.' } }] }) };
+      }
       let body = {};
       try { body = JSON.parse(fetchOptions.body || '{}'); } catch (error) { body = {}; }
       // a retired model answers 404, exactly like a real provider
@@ -141,6 +150,22 @@ async function boot(options = {}) {
         if (step === 'empty') return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '' }, finish_reason: 'length' }] }) };
         if (step === 'truncated') return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'Respected Sir, I am' }, finish_reason: 'length' }] }) };
         if (step === '500') return { ok: false, status: 500, json: async () => ({ error: { message: 'boom' } }) };
+        if (step === '503') return { ok: false, status: 503, headers: { get: () => null }, json: async () => ({ error: { message: 'overloaded' } }) };
+        if (step === 'hang') {
+          // never resolves until the caller aborts — the "she is still thinking" state
+          return new Promise((resolve, reject) => {
+            const signal = fetchOptions.signal;
+            const abort = () => {
+              const err = new Error('aborted');
+              err.name = 'AbortError';
+              reject(err);
+            };
+            if (signal) {
+              if (signal.aborted) abort();
+              else signal.addEventListener('abort', abort);
+            }
+          });
+        }
         if (typeof step === 'string') return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: step } }] }) };
       }
       return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'Theek hai, **sun rahi** hoon.' } }] }) };
@@ -188,6 +213,7 @@ async function boot(options = {}) {
   window.TextEncoder = TextEncoder;
   window.TextDecoder = TextDecoder;
 
+  window.eval(fs.readFileSync(path.join(ROOT, 'net.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'security.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'docs.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'github.js'), 'utf8'));
@@ -1342,6 +1368,81 @@ function submit(window, text) {
   doc.getElementById('memInput').value = 'Class 12 SA1 Monday';
   doc.getElementById('btnMemAdd').click();
   ok(/SA1/.test(b.window.localStorage.getItem('jenni_notes_v1') || ''), 'memory add persists');
+  b.dom.window.close();
+
+  /* ══════════════════════════════════════════════════════════════════════
+     THE 503 STORY (the bug the owner reported)
+     Provider-side overload must heal itself, say what happened in plain
+     words, keep a working retry, and never leave voice mode wedged. */
+
+  /* 1. a 503 that clears on the second try is invisible to the user */
+  b = await boot({ script: ['503', 'Lo, ab jawab aa gaya.'] });
+  submit(b.window, 'namaste');
+  await wait(2200);
+  const recovered = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
+  ok(recovered.includes('jawab aa gaya'), 'a 503 is retried and the answer arrives', recovered.slice(0, 70));
+  ok(!recovered.includes('Jawab nahi aaya'), 'a recovered 503 shows no error bubble');
+  b.dom.window.close();
+
+  /* 2. a hard outage explains itself: their side, not your key — and offers retry */
+  b = await boot({ script: ['503', '503', '503', '503', '503'] });
+  submit(b.window, 'leave application banao');
+  await wait(9000);
+  const downText = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
+  ok(/aapki key ki galti nahi/i.test(downText), 'a 503 says the provider is at fault, not the key', downText.slice(0, 120));
+  ok(!/HTTP 503\).?$/.test(downText.replace('Jawab nahi aaya. ', '')), 'the bare "gadbad (HTTP 503)" dead end is gone');
+  ok(Boolean(b.window.document.querySelector('.msg__tool--retry')), 'the failed 503 turn still offers a retry button');
+  b.dom.window.close();
+
+  /* 3. a spare provider key turns a main-provider outage into a normal answer */
+  b = await boot({
+    spareOk: 'api.openai.com',
+    cfg: Object.assign({}, CFG, { fallbackKeys: { openai: 'sk-spare' + 'k'.repeat(20) }, fallbackProvider: 'openai' }),
+    script: ['503', '503', '503', '503']
+  });
+  submit(b.window, 'kal ka mausam kaisa hai');
+  await wait(7000);
+  const spareReply = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
+  ok(spareReply.includes('Backup provider se jawab'), 'the spare provider answers when the main one is down', spareReply.slice(0, 80));
+  const spareCall = b.calls.find((c) => c.url.includes('api.openai.com'));
+  ok(spareCall && spareCall.options.headers.Authorization.includes('sk-spare'), 'the spare key is used for the fallback request');
+  b.dom.window.close();
+
+  /* 4. voice mode survives a dead provider: it speaks the reason once and the
+        mic reopens, so the conversation is still two-way */
+  b = await boot({ script: ['503', '503', '503', '503'] });
+  b.$('btnVoice').click();
+  await wait(120);
+  b.rec.last.say('namaste jenni');
+  await wait(6000);
+  ok(b.$('app').classList.contains('is-voice'), 'voice mode stays on after a failed turn', String(b.tts.spoken.length));
+  ok(b.tts.spoken.some((line) => /busy|dikkat|galti nahi|baad/i.test(line.text)), 'the failure is spoken to the user, not just printed', JSON.stringify(b.tts.spoken.map((t) => t.text)).slice(0, 120));
+  ok(b.rec.starts >= 2, 'the mic reopens after the failure, so the user can speak again');
+  b.dom.window.close();
+
+  /* 5. real two-way: a new sentence interrupts a turn that is still thinking */
+  b = await boot({ script: ['hang', 'Naya jawab, pehle wala chhod do.'] });
+  b.$('btnVoice').click();
+  await wait(120);
+  b.rec.last.say('pehla sawaal');
+  await wait(800);
+  ok(b.$('app').classList.contains('is-voice'), 'voice mode is live while she is still thinking');
+  b.rec.last.say('ruko, doosra sawaal');
+  await wait(2500);
+  const afterBarge = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
+  ok(afterBarge.includes('Naya jawab'), 'the second sentence gets answered after interrupting the first', afterBarge.slice(0, 90));
+  ok(!afterBarge.includes('pehla sawaal'), 'the interrupted turn leaves no half answer behind');
+  ok(b.$('app').classList.contains('is-voice') && b.rec.starts >= 2, 'the loop keeps going after an interruption');
+  b.dom.window.close();
+
+  /* 6. "Chup" during a streaming answer stops the stream, not just the sound */
+  b = await boot({ script: ['hang', 'chup ke baad ka jawab'] });
+  submit(b.window, 'ek lamba jawab do');
+  await wait(600);
+  b.$('btnStopSpeak').click();
+  await wait(400);
+  const afterChup = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
+  ok(!/Jawab nahi aaya/.test(afterChup), 'a deliberate Chup is not reported as a provider failure', afterChup.slice(0, 80));
   b.dom.window.close();
 
   console.log('\n' + checks + ' checks, ' + (checks - failures) + ' passed' + (failures ? ', ' + failures + ' FAILED' : ''));

@@ -369,6 +369,19 @@
     </div>
     <p class="room-result" id="setupResult" role="status" aria-live="polite"></p>
 
+    <h3 class="sheet__sub">Backup provider (optional)</h3>
+    <p class="field-hint">Jab main provider 503/limit de ya key expired ho, Jenni isi spare key se jawab la degi. Key wahi PIN vault me encrypted rehti hai — backup file me kabhi nahi jaati.</p>
+    <label class="label" for="fbProvider">Spare provider</label>
+    <select class="field" id="fbProvider">
+      <option value="">— koi nahi —</option>
+    </select>
+    <input class="field" id="fbKey" type="password" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="spare API key">
+    <div class="row row--wrap">
+      <button class="btn" type="button" id="btnFbSave">Save spare key</button>
+      <button class="btn btn--ghost" type="button" id="btnFbClear">Remove</button>
+    </div>
+    <p class="room-result" id="fbResult" role="status" aria-live="polite"></p>
+
     <h3 class="sheet__sub">Notes &amp; tasks</h3>
     <div id="notesList"></div>
     <input class="field" id="memInput" maxlength="220" placeholder="note, ya  todo: SA1 report Monday">
@@ -598,6 +611,7 @@
 
 <div class="toast-host" id="toastHost" aria-live="polite"></div>
 
+<script src="./net.js"></script>
 <script src="./security.js"></script>
 <script src="./docs.js"></script>
 <script src="./github.js"></script>
