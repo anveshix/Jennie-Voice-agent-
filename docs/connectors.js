@@ -19,11 +19,12 @@
   const BUSY = ['CREATED', 'DECIDED', 'PLANNED', 'DELIBERATING', 'EXECUTING', 'VERIFYING', 'DELIVERING'];
   const DELEGATE_RE = /\b(question paper|worksheet|quiz|lesson plan|active recall|story|storytelling|visual|notice|circular|marking scheme|answer key|blueprint|unit test|revision|flashcards?)\b|प्रश्न\s*पत्र|वर्कशीट|क्विज़?/i;
 
+  /* NeverMind has no login, so Jenni talks to it ONLY on this same computer.
+     A remote or LAN address is refused — nothing here may expose that API. */
   const isSafeBase = (url) => {
     try {
       const u = new URL(url);
-      const local = /^(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)$/.test(u.hostname);
-      return u.protocol === 'https:' || (u.protocol === 'http:' && local);
+      return (u.protocol === 'http:' || u.protocol === 'https:') && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname) && !u.username && !u.password;
     } catch (e) { return false; }
   };
   const cleanBase = (url) => String(url || '').trim().replace(/\/+$/, '');
@@ -31,18 +32,15 @@
   function createNeverMind(cfg, fetchImpl) {
     const f = fetchImpl || (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null);
     const base = cleanBase(cfg && cfg.url);
-    const headers = (json) => Object.assign(
-      json ? { 'Content-Type': 'application/json' } : {},
-      cfg && cfg.token ? { Authorization: 'Bearer ' + cfg.token } : {});
+    const headers = (json) => (json ? { 'Content-Type': 'application/json' } : {});
 
     async function call(path, body) {
       if (!f) throw new Error('fetch nahi hai');
-      if (!isSafeBase(base)) throw new Error('NeverMind URL https:// hona chahiye (ya local network).');
+      if (!isSafeBase(base)) throw new Error('NeverMind sirf isi computer par (http://localhost:8317) jud sakta hai.');
       const res = await f(base + path, body
         ? { method: 'POST', headers: headers(true), body: JSON.stringify(body) }
         : { headers: headers(false) });
-      if (res.status === 401) throw new Error('NeverMind token galat ya missing hai.');
-      if (res.status === 403) throw new Error('NeverMind ne is origin ko allow nahi kiya (NEVERMIND_CORS_ORIGINS).');
+      if (res.status === 403) throw new Error('NeverMind ne is page ko allow nahi kiya — Jenni aur NeverMind ek hi computer par chalne chahiye.');
       if (!res.ok) throw new Error('NeverMind HTTP ' + res.status);
       return res.json();
     }

@@ -350,7 +350,7 @@ Skills (official letters, lesson plans, result diagnostics, planner, commerce tu
 
 ## NeverMind agents, skill packs, voice switch
 
-- **NeverMind bridge** (Setup → NeverMind): paste your deployed NeverMind URL (+ token). Requests for worksheets, quizzes, question papers, lesson plans, notices etc. (or `nevermind: …`) are delegated to its 9 agents / 21 verified skills; Jenni returns the summary and file links, and falls back to normal chat on error. "Memory sync" pulls NeverMind's active semantic/procedural memory into Jenni. On the NeverMind server set `NEVERMIND_CORS_ORIGINS` (default `https://anveshix.github.io`) and `NEVERMIND_API_TOKEN`.
+- **NeverMind bridge** (Setup → NeverMind), **same computer only**: paste `http://localhost:8317`. Requests for worksheets, quizzes, question papers, lesson plans, notices etc. (or `nevermind: …`) are delegated to its 9 agents / 21 verified skills; Jenni returns the summary and file links, and falls back to normal chat on error. "Memory sync" pulls NeverMind's active semantic/procedural memory into Jenni. NeverMind has no login, so it must not be exposed: Jenni refuses any non-localhost address, and NeverMind itself only answers cross-origin requests from a loopback client with an exact allowed origin (`NEVERMIND_CORS_ORIGINS`, default `https://anveshix.github.io`; `*` is ignored). From a phone, open NeverMind's own page instead of linking it to Jenni.
 - **Skill packs**: install any public repo's `SKILL.md` files (PpSkills-/skills.sh format, e.g. `anveshix/PpSkills-`); they load when a message matches their description. "Find skills" searches skills.sh.
 - **Voice switch**: the speaker button in the app bar turns all voice (mic, hands-free loop, read-aloud) on/off; saved per device.
 
@@ -368,7 +368,7 @@ Skills (official letters, lesson plans, result diagnostics, planner, commerce tu
 
 With a PIN set, **chat, drafts, notes and the agent's facts, playbooks and journal** are stored only as AES-256-GCM blobs (`*_v1_enc`), under a key derived from the PIN (PBKDF2-SHA256, 210k, own salt) that lives in memory only while unlocked. Locking (manual, idle, tab hide) clears them from memory and the page; nothing is written while locked. Setting, changing or removing the PIN re-encrypts/migrates existing data. Unlocking no longer writes the API key back to storage in plaintext. Forget the PIN and the data is unrecoverable — use Setup → Backup → Export data first.
 
-Phone use (GitHub Pages app) has no server, so `JENNI_ACCESS_TOKEN` is not needed there; it only matters if you deploy the Node server. For the NeverMind bridge from the phone, set `NEVERMIND_API_TOKEN`.
+Phone use (GitHub Pages app) has no server, so `JENNI_ACCESS_TOKEN` is not needed there; it only matters if you deploy the Node server. The NeverMind bridge works only on the same computer (see above).
 
 ## Task reminders
 
