@@ -130,6 +130,9 @@
         </span>
       </div>
       <div class="appbar__actions">
+        <button class="icon-btn icon-btn--round" type="button" id="btnNewChat" aria-label="Naya chat — jo seekha wo yaad rahega">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.4 5.7"/><path d="M20 5v6h-6"/></svg>
+        </button>
         <button class="icon-btn icon-btn--round is-on" type="button" id="btnVoiceMaster" aria-pressed="true" aria-label="Voice on — tap to turn off" title="Voice ON">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path class="vm-slash" style="display:none" d="m3 3 18 18"/></svg>
         </button>
@@ -316,17 +319,14 @@
     </div>
     <p class="room-result" id="setupResult" role="status" aria-live="polite"></p>
 
-    <h3 class="sheet__sub">Memory (Jenni ko kya yaad hai)</h3>
-    <div id="memoryList"></div>
+    <h3 class="sheet__sub">Notes &amp; tasks</h3>
+    <div id="notesList"></div>
     <input class="field" id="memInput" maxlength="220" placeholder="note, ya  todo: SA1 report Monday">
     <label class="row"><input type="checkbox" id="remindToggle"> <span>Task reminders (notification)</span></label>
     <p class="room-result" id="remindInfo" role="status"></p>
     <div class="row row--wrap">
       <button class="btn btn--primary" type="button" id="btnMemAdd">Add</button>
-      <button class="btn" type="button" id="btnMemExport">Export</button>
-      <button class="btn" type="button" id="btnMemImport">Import</button>
       <button class="btn btn--ghost" type="button" id="btnMemClear">Clear all</button>
-      <input type="file" id="memFile" accept="application/json" hidden>
     </div>
 
     <h3 class="sheet__sub">NeverMind agents &amp; skill packs</h3>
@@ -426,7 +426,30 @@
     </div>
     <p class="field-hint">Mic khud khulta hai. Rukna ho to mic ya <em>Chup</em>. iPhone me har message par mic dabana pad sakta hai.</p>
 
-    <h3 class="sheet__sub">4. Bot</h3>
+    <h3 class="sheet__sub">4. Memory</h3>
+    <div class="status" id="memoryStatus"><span class="status__dot"></span><span id="memoryStatusText">Kuch yaad nahi</span></div>
+    <div class="stack stack--tight" id="memoryList"></div>
+    <div class="row row--wrap">
+      <button class="btn btn--small" type="button" id="btnMemoryRefresh">Refresh</button>
+      <button class="btn btn--small btn--danger" type="button" id="btnMemoryClear">Sab bhool jao</button>
+    </div>
+    <p class="field-hint">Jenni sirf wahi yaad rakhti hai jo tum khud batao — naam, sheher, padhai, pasand. Sab is phone me, key ki tarah.</p>
+
+    <h3 class="sheet__sub">5. Skills</h3>
+    <p class="field-hint" id="skillsSummary">—</p>
+    <div class="stack stack--tight" id="skillList"></div>
+
+    <h3 class="sheet__sub">6. Journal — jo chats se seekha</h3>
+    <p class="field-hint" id="journalSummary">Abhi ek bhi chat clear nahi hui.</p>
+    <div class="stack stack--tight" id="insightList"></div>
+    <div class="stack stack--tight" id="episodeList"></div>
+    <div class="row row--wrap">
+      <button class="btn btn--small" type="button" id="btnJournalRefresh">Refresh</button>
+      <button class="btn btn--small btn--danger" type="button" id="btnJournalClear">Journal saaf karo</button>
+    </div>
+    <p class="field-hint">Chat clear karne par Jenni pehle usme se baat aur tarika seekhti hai — phir screen khali karti hai. Yaani chat gaya, seekha nahi gaya.</p>
+
+    <h3 class="sheet__sub">7. Bot</h3>
     <label class="toggle-row" for="botToggle">
       <span>
         <strong>Screen par floating bot</strong>
@@ -436,7 +459,7 @@
     </label>
     <p class="field-hint">Pakad kar khincho — kinare se chipak jayega. Tap = bolo.</p>
 
-    <h3 class="sheet__sub">5. Backup</h3>
+    <h3 class="sheet__sub">8. Backup</h3>
     <div class="row row--wrap">
       <button class="btn btn--small" type="button" id="btnExport">Export data</button>
       <button class="btn btn--small" type="button" id="btnImport">Import data</button>
@@ -484,6 +507,7 @@
 <script src="./brain.js"></script>
 <script src="./remind-store.js"></script>
 <script src="./connectors.js"></script>
+<script src="./agent.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

@@ -19,10 +19,14 @@
     packs: 'jenni_packs_v1',   // installed SKILL.md packs
     remind: 'jenni_remind_on', // reminders enabled ('1')
     voiceOn: 'jenni_voice_on', // master voice switch ('0' = off)
-    memory: 'jenni_memory_v1', // long-term memory (local only, wiped by panic)
-    lock: 'jenni_lock_v1',     // PIN settings + config
+    notes: 'jenni_notes_v1',   // owner notes + tasks (brain.js)
     dk: 'jenni_dk_v1',         // salt for the data key (not secret)
-    vault: 'jenni_vault_v1'    // the encrypted API key
+    lock: 'jenni_lock_v1',     // PIN settings + config
+    vault: 'jenni_vault_v1',   // the encrypted API key
+    memory: 'jenni_memory_v1', // durable facts about the user
+    skills: 'jenni_skills_v1', // procedures learned from real chats
+    episodes: 'jenni_episodes_v1', // one row per cleared chat
+    insights: 'jenni_insights_v1'  // habits distilled from those chats
   };
 
   const PRESETS = {
@@ -48,6 +52,37 @@
   const GH = window.JENNI_GITHUB || {};
   const BRAIN = window.JENNI_BRAIN;
   const CN = window.JENNI_CONNECT;
+  const AGENT = window.JENNI_AGENT || {};
+
+  /* Long-term memory and learned skills. Both are plain localStorage data, so
+     they show up in the UI, survive reloads and vanish on "Erase everything".
+     Declared after AGENT, which they depend on. */
+  const SECURE_KEYS = [LS.chat, LS.drafts, LS.notes, LS.memory, LS.skills, LS.episodes, LS.insights];
+  const vault = new Map();          // decrypted JSON strings while unlocked
+  const vaultQueue = {};            // per-key write chain (keeps writes in order)
+  const secureStore = {
+    getItem(key) {
+      if (!security.enabled || !SECURE_KEYS.includes(key)) return localStorage.getItem(key);
+      return vault.has(key) ? vault.get(key) : null;
+    },
+    setItem(key, value) {
+      if (!security.enabled || !SECURE_KEYS.includes(key)) return localStorage.setItem(key, value);
+      const dataKey = security.dataKey;
+      if (!dataKey) return;                                           // locked: never fall back to plaintext
+      vault.set(key, String(value));
+      vaultQueue[key] = (vaultQueue[key] || Promise.resolve())
+        .then(() => SEC.encryptJson(dataKey, key, JSON.parse(String(value))))
+        .then((blob) => { localStorage.setItem(key + '_enc', JSON.stringify(blob)); localStorage.removeItem(key); return true; })
+        .catch(() => { toast('Data encrypt/save nahi ho paya', true); return false; });
+    },
+    removeItem(key) {
+      localStorage.removeItem(key);
+      if (SECURE_KEYS.includes(key)) { localStorage.removeItem(key + '_enc'); vault.delete(key); }
+    }
+  };
+  const memory = AGENT.createMemory ? AGENT.createMemory(secureStore) : null;
+  const skills = AGENT.createSkills ? AGENT.createSkills(secureStore) : null;
+  const journal = AGENT.createJournal ? AGENT.createJournal(secureStore) : null;
   const $ = (id) => document.getElementById(id);
   const now = () => Date.now();
 
@@ -107,12 +142,24 @@
     toastTimer = setTimeout(() => el.remove(), 3400);
   }
 
+  /* one-time: notes my earlier build stored under agent.js's key (plaintext case) */
+  (function migrateLegacyNotes() {
+    try {
+      const raw = localStorage.getItem(LS.memory);
+      const legacy = raw && splitLegacyNotes(raw);
+      if (!legacy) return;
+      const have = JSON.parse(localStorage.getItem(LS.notes) || '[]');
+      localStorage.setItem(LS.notes, JSON.stringify(legacy.notes.concat(Array.isArray(have) ? have : [])));
+      localStorage.setItem(LS.memory, JSON.stringify(legacy.facts));
+    } catch (e) { /* storage unavailable */ }
+  }());
+
   /* ── state ─────────────────────────────────────────────────────────────── */
   const state = {
     cfg: readJson(LS.config, null),
     drafts: readJson(LS.drafts, []),
     chat: readJson(LS.chat, []),
-    memory: readJson(LS.memory, []),
+    notes: readJson(LS.notes, []),
     drive: readJson(LS.drive, { clientId: '' }),
     driveToken: readJson(LS.driveToken, null),
     busy: false,
@@ -401,6 +448,7 @@
       'Galat mat bolo. API key, password, OTP, bank details kabhi maango mat, kabhi repeat mat karo. Medical/legal/paisa wale serious sawaal par salah do par "doctor/lawyer se confirm karo" bolna zaroori hai. Emergency (khud ko nuksan, koi khatre me) me pehle safety, phir baat.',
       // honesty about being an AI
       'Jab seedha poochha jaye to maan lo ki tum AI ho (internet par chalne wali), par apni personality mat chhodo — insaan hone ka jhooth mat bolo.',
+      'Aaj 2026 ke aakhir me ho aur aage 2027-2030 ki soch ke jawab do: career, padhai, AI, technology, paisa — har cheez me ye socho ki agle 3-5 saal me kya badlega, kaunsi skill aaj se bachayegi, aur kya aaj ka trend 2030 tak purana ho jayega. Purani ya outdated baat ko confidently "aaj ka sach" mat batao — jo cheez 2024 tak sach thi par ab badal chuki hai, wo bolo ki badal chuki hai.',
       // the user calls her "yes sir" style — mirror respect without grovelling
       'DOC FILE RULE: jab user doc/word/pdf/letter/application maange to seedha poora draft likho — placeholders [] me, beech me sawaal nahi. Kabhi mat bolo ki tum file nahi bana sakti ya download nahi kar sakti: phone app tumhare jawab se apne aap .docx/.txt/.md/.csv file bana kar Download button deta hai. "Main file nahi bana sakti, tum copy karo" jaisa jumla bilkul nahi — bas draft do, file app bana degi.',
       'User ke paas git/terminal nahi hai, isliye unhe clone/install karne ko mat bolo. GitHub ka public code padhna ho to tum khud jenniFetchRepo(tool) se padh sakti ho — jawab me links aur seedha code sample do.',
@@ -435,24 +483,23 @@
     toast(on ? 'Voice ON' : 'Voice OFF', false);
   }
 
-  function loadMemory() { return BRAIN ? state.memory : []; }
-  function saveMemory(list) { state.memory = list; persist('memory'); paintMemory(); syncReminders(); }
+  function loadNotes() { return BRAIN ? state.notes : []; }
+  function saveNotes(list) { state.notes = list; persist('notes'); paintNotes(); syncReminders(); }
 
-  /* ── encrypted storage for chat, drafts and memory ─────────────────────────
-     With a PIN set, these live only as AES-GCM blobs (`<key>_enc`). While the
-     app is locked nothing is written and nothing is held in memory. */
-  const writeChain = {};
+  /* ── encrypted storage ────────────────────────────────────────────────────
+     With a PIN set, chat, drafts, notes AND the agent's facts, playbooks and
+     journal live only as AES-GCM blobs (`<key>_enc`). `secureStore` is a
+     localStorage-shaped adapter, so agent.js needs no changes. While locked it
+     reads nothing and writes nothing. */
+  async function flushVault() {
+    await Promise.all(Object.keys(vaultQueue).map((k) => vaultQueue[k]));
+  }
   function persist(name) {
     const key = LS[name];
     const value = name === 'chat' ? state.chat.filter((m) => !m.pending) : state[name];
     if (!security.enabled) return Promise.resolve(writeJson(key, value));
-    const dataKey = security.dataKey;
-    if (!dataKey) return Promise.resolve(false);              // locked: never fall back to plaintext
-    writeChain[name] = (writeChain[name] || Promise.resolve())
-      .then(() => SEC.encryptJson(dataKey, key, value))
-      .then((blob) => { localStorage.setItem(key + '_enc', JSON.stringify(blob)); localStorage.removeItem(key); return true; })
-      .catch(() => { toast('Data encrypt/save nahi ho paya', true); return false; });
-    return writeChain[name];
+    secureStore.setItem(key, JSON.stringify(value));
+    return vaultQueue[key] || Promise.resolve(true);
   }
   /* ── reminders ─────────────────────────────────────────────────────────────
      The service worker cannot read encrypted storage, so a minimal index goes to
@@ -464,7 +511,7 @@
     try {
       const prev = (await RSTORE.get('index')) || {};
       const titles = !security.enabled;
-      const items = state.memory.filter((m) => m.cat === 'task' && m.due).map((m) => ({ due: m.due, text: titles ? m.text : '' }));
+      const items = state.notes.filter((m) => m.cat === 'task' && m.due).map((m) => ({ due: m.due, text: titles ? m.text : '' }));
       await RSTORE.set('index', { on: remindOn(), titles, items, lastKey: prev.lastKey || '' });
     } catch (e) { /* IndexedDB blocked (private mode): in-page reminders still work */ }
   }
@@ -497,7 +544,16 @@
     return true;
   }
 
-  const persistAll = () => Promise.all(['chat', 'drafts', 'memory'].map(persist));
+  const persistAll = async () => {
+    await Promise.all(['chat', 'drafts', 'notes'].map(persist));
+    // agent.js keys: carry over whatever is plaintext (enable) or already decrypted (PIN change)
+    SECURE_KEYS.forEach((key) => {
+      if (['chat', 'drafts', 'notes'].some((n) => LS[n] === key)) return;
+      const value = vault.has(key) ? vault.get(key) : localStorage.getItem(key);
+      if (value != null) secureStore.setItem(key, value);
+    });
+    await flushVault();
+  };
 
   async function initDataKey(pin, fresh) {
     let salt = localStorage.getItem(LS.dk);
@@ -505,19 +561,39 @@
     security.dataKey = await SEC.deriveDataKey(pin, salt);
   }
 
-  /* Load the three stores after unlock; migrate any legacy plaintext copy. */
+  /* My old build stored notes in `jenni_memory_v1`, which agent.js also owns
+     (facts have `kind`, notes have `cat`). Split them apart once. */
+  function splitLegacyNotes(raw) {
+    let list; try { list = JSON.parse(raw); } catch (e) { return null; }
+    if (!Array.isArray(list)) return null;
+    const mine = list.filter((x) => x && x.cat && !x.kind);
+    return mine.length ? { notes: mine, facts: list.filter((x) => !(x && x.cat && !x.kind)) } : null;
+  }
+
+  /* Load everything after unlock; migrate any legacy plaintext copy. */
   async function hydrate() {
-    for (const name of ['chat', 'drafts', 'memory']) {
-      const key = LS[name];
-      const raw = localStorage.getItem(key + '_enc');
-      if (raw && security.dataKey) {
-        try { state[name] = await SEC.decryptJson(security.dataKey, key, JSON.parse(raw)); }
-        catch (error) { state[name] = []; toast('Ek saved data padha nahi ja saka (' + name + ')', true); }
-      } else {
-        state[name] = readJson(key, []);
-        if (security.enabled && security.dataKey && localStorage.getItem(key)) await persist(name);   // encrypt + remove plaintext
+    vault.clear();
+    for (const key of SECURE_KEYS) {
+      const enc = localStorage.getItem(key + '_enc');
+      if (enc && security.dataKey) {
+        try { vault.set(key, JSON.stringify(await SEC.decryptJson(security.dataKey, key, JSON.parse(enc)))); }
+        catch (error) { toast('Ek saved data padha nahi ja saka (' + key.replace('jenni_', '') + ')', true); }
+      } else if (security.enabled && security.dataKey && localStorage.getItem(key) != null) {
+        vault.set(key, localStorage.getItem(key));
+        secureStore.setItem(key, localStorage.getItem(key));          // encrypt + remove plaintext
       }
     }
+    const legacy = vault.has(LS.memory) ? splitLegacyNotes(vault.get(LS.memory)) : null;
+    if (legacy) {
+      vault.set(LS.notes, JSON.stringify(legacy.notes.concat(JSON.parse(vault.get(LS.notes) || '[]'))));
+      secureStore.setItem(LS.notes, vault.get(LS.notes));
+      secureStore.setItem(LS.memory, JSON.stringify(legacy.facts));
+    }
+    for (const name of ['chat', 'drafts', 'notes']) {
+      try { state[name] = JSON.parse(vault.get(LS[name]) || '[]'); } catch (e) { state[name] = []; }
+      if (!Array.isArray(state[name])) state[name] = [];
+    }
+    await flushVault();
   }
 
   function personaPrompt(userText) {
@@ -525,18 +601,50 @@
       PERSONA.lines.join(' '),
       'Aaj: ' + new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.',
       'Never ask for or repeat API keys, passwords or personal identifiers.',
-      BRAIN ? BRAIN.buildContext({ text: userText, memories: loadMemory(), packs: CN ? CN.matchPacks(userText, loadPacks()) : [], team: readJson(LS.nmTeam, []) }) : ''
+      BRAIN ? BRAIN.buildContext({ text: userText, memories: loadNotes(), packs: CN ? CN.matchPacks(userText, loadPacks()) : [], team: readJson(LS.nmTeam, []) }) : ''
     ].join(' ');
   }
 
   const SYSTEM_PROMPT = personaPrompt();
+
+  /** The facts and the playbook that matter for *this* message. */
+  function agentContextFor(userText) {
+    const parts = [];
+    if (memory) {
+      const facts = memory.recall(userText, 6);
+      if (facts.length) {
+        parts.push('User ke baare me yaad hai (sirf zaroorat par use karo, list mat do):\n'
+          + facts.map((fact) => '- ' + fact.text).join('\n'));
+      }
+    }
+    if (skills) {
+      const matched = skills.match(userText);
+      if (matched.length) {
+        parts.push('Playbook jo pehle kaam aaya (follow karo, par jawab me steps ki list mat banao):\n'
+          + matched.map((skill) => skill.name + ': ' + skill.steps.join(' → ')).join('\n'));
+      }
+    }
+    /* The recursive part: what earlier chats taught her still reaches a chat
+       that started empty. Only the strongest few, never a wall of notes. */
+    if (journal) {
+      const habits = journal.insights()
+        .filter((insight) => (insight.confidence || 0) >= 0.45)
+        .slice(0, 4)
+        .map((insight) => '- ' + insight.text);
+      if (habits.length) {
+        parts.push('Pichhli baaton se seekha (halke se follow karo, user ko list mat do):\n' + habits.join('\n'));
+      }
+    }
+    return parts.length ? '\n\n' + parts.join('\n\n') : '';
+  }
 
   function conversationForApi(userText) {
     // Recent turns only: older messages make the first token slower and rarely help.
     const history = state.chat.slice(-8)
       .filter((m) => m.text && !m.pending && !String(m.text).startsWith('Maaf karo'))
       .map((m) => ({ role: m.role === 'me' ? 'user' : 'assistant', content: m.text }));
-    return [{ role: 'system', content: personaPrompt(userText) }, ...history, { role: 'user', content: userText }];
+    const system = personaPrompt() + agentContextFor(userText);
+    return [{ role: 'system', content: system }, ...history, { role: 'user', content: userText }];
   }
 
   /* ══════════════════════════════════════════════════════════════ CHAT UI */
@@ -597,7 +705,27 @@
         setTimeout(() => { copy.textContent = 'Copy'; }, 1800);
       });
 
-      foot.append(save, copy);
+      /* 👍 / 👎 — the fastest signal a phone user can give, and the one the
+         agent actually learns from (memory confidence, skill rating). */
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'msg__tool msg__tool--rate';
+      up.textContent = '👍';
+      up.setAttribute('aria-label', 'Pasand aaya — yaad rakho');
+      up.setAttribute('aria-pressed', message.rating === 'up' ? 'true' : 'false');
+      if (message.rating === 'up') up.classList.add('is-on');
+      up.addEventListener('click', () => rateReply(message, 'up'));
+
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.className = 'msg__tool msg__tool--rate';
+      down.textContent = '👎';
+      down.setAttribute('aria-label', 'Pasand nahi aaya — agla alag');
+      down.setAttribute('aria-pressed', message.rating === 'down' ? 'true' : 'false');
+      if (message.rating === 'down') down.classList.add('is-on');
+      down.addEventListener('click', () => rateReply(message, 'down'));
+
+      foot.append(save, copy, up, down);
 
       if (message.doc && DOCS.buildDocx) {
         const download = document.createElement('button');
@@ -725,7 +853,7 @@
 
     if (BRAIN) {
       const cmd = BRAIN.userCommand(clean);
-      if (cmd) { saveMemory(BRAIN.applyOps(loadMemory(), [cmd])); toast('Yaad rakh liya', false); }
+      if (cmd) { saveNotes(BRAIN.applyOps(loadNotes(), [cmd])); toast('Yaad rakh liya', false); }
     }
 
     state.busy = true;
@@ -742,31 +870,39 @@
     let reply = '';
     try {
       // Voice: keep the reply short so speech starts fast. Typed: allow more.
-      let delegated = null;
-      let untrusted = false;   // external text in this turn → it may not write memory
-      if (navigator.onLine === false) throw Object.assign(new Error('Internet nahi hai — connect hote hi dobara bhejna.'), { code: 'OFFLINE' });
-      const nm = nmClient();
-      if (nm && CN.wantsDelegation(clean)) {
-        try {
-          delegated = await nm.delegate(CN.stripPrefix(clean));
-        } catch (error) { toast('NeverMind: ' + error.message, true); }   // fall back to plain chat
+      const repoContext = await repoContextFor(clean);
+
+      // Learn durable facts before asking — "mera naam Aarav hai" must survive
+      // the next reload, not just this conversation.
+      if (memory) {
+        const learned = memory.observe(clean, 'chat');
+        if (learned.length) memory.compact();
       }
-      if (delegated) {
-        untrusted = true;
-        reply = ['NeverMind agents (' + delegated.status + '):', delegated.summary]
-          .concat(delegated.files.map((f) => `[${f.name}](${f.url})`)).join('\n\n');
-      } else {
-        const repoContext = await repoContextFor(clean);
-        untrusted = Boolean(repoContext);
-        reply = await askProvider(
-          conversationForApi(clean + repoContext),
-          { maxTokens: voice.mode ? 260 : 600 }
-        );
+
+      reply = await askProvider(
+        conversationForApi(clean + repoContext),
+        { maxTokens: voice.mode ? 260 : 600 }
+      );
+
+      // One self-check pass: a plan-shaped question deserves more than "haan".
+      if (AGENT.critiqueAnswer && !voice.mode) {
+        const verdict = AGENT.critiqueAnswer(reply, clean);
+        if (!verdict.ok) {
+          setStatus('busy');
+          const better = await askProvider(
+            conversationForApi(clean + repoContext
+              + '\n\n[Tumhara pichla draft is wajah se adhura tha: ' + verdict.reason
+              + '. Ab poora, seedha aur kaam ka jawab do.]'),
+            { maxTokens: 700 }
+          );
+          if (better && better.length > reply.length * 0.6) reply = better;
+        }
       }
-      if (BRAIN) {
-        const parsed = BRAIN.extractOps(reply);
-        reply = parsed.text;
-        if (parsed.ops.length && !untrusted) { saveMemory(BRAIN.applyOps(loadMemory(), parsed.ops)); toast('Memory update ho gayi', false); }
+      /* A useful step-by-step answer becomes a reusable playbook, so the next
+         similar question starts from experience instead of zero (Hermes-style). */
+      if (skills && AGENT.skillFrom && reply) {
+        const learned = AGENT.skillFrom(clean, reply);
+        if (learned) skills.learn(learned);
       }
       pending.pending = false;
       pending.text = reply;
@@ -1254,10 +1390,10 @@
     toast('Draft save ho gaya');
   }
 
-  function paintMemory() {
-    const host = $('memoryList');
+  function paintNotes() {
+    const host = $('notesList');
     if (!host || !BRAIN) return;
-    const list = loadMemory();
+    const list = loadNotes();
     host.textContent = '';
     if (!list.length) {
       const empty = document.createElement('p');
@@ -1278,7 +1414,7 @@
       del.type = 'button';
       del.className = 'btn btn--ghost';
       del.textContent = m.cat === 'task' ? 'Done ✓' : 'Delete';
-      del.addEventListener('click', () => saveMemory(loadMemory().filter((x) => x.id !== m.id)));
+      del.addEventListener('click', () => saveNotes(loadNotes().filter((x) => x.id !== m.id)));
       row.append(label, del);
       host.appendChild(row);
     });
@@ -1610,6 +1746,7 @@
     if ($('transcribe')) $('transcribe').value = cfg.transcribe || PRESETS.groq.transcribe;
     paintProvGrid(cfg.provider || 'groq');
     paintSetupStatus();
+    paintMemory();
   }
 
   function paintModelLinks(provider) {
@@ -1703,7 +1840,19 @@
   /* ══════════════════════════════════════════════════════════════ EXPORT */
 
   function exportData() {
-    const data = { drafts: state.drafts, config: state.cfg ? { ...state.cfg, apiKey: '' } : null, drive: state.drive, at: new Date().toISOString() };
+    /* Everything that took time to build goes in the backup — the key never
+       does. Memory, learned playbooks and the journal are the expensive part. */
+    const data = {
+      drafts: state.drafts,
+      config: state.cfg ? { ...state.cfg, apiKey: '' } : null,
+      drive: state.drive,
+      notes: state.notes,
+      memory: memory ? memory.all() : [],
+      skills: skills ? skills.custom() : [],
+      episodes: journal ? journal.episodes() : [],
+      insights: journal ? journal.insights() : [],
+      at: new Date().toISOString()
+    };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -1724,7 +1873,30 @@
           persist('drafts');
           paintDrafts();
         }
-        toast('Import ho gaya');
+        /* Merge, never replace: a restore on a phone that already learned
+           things must not throw the newer learning away. */
+        const merge = (key, incoming, idOf) => {
+          if (!Array.isArray(incoming) || !incoming.length) return 0;
+          let existing = [];
+          try { existing = JSON.parse(secureStore.getItem(key) || '[]'); } catch (error) { existing = []; }
+          if (!Array.isArray(existing)) existing = [];
+          const seen = new Set(existing.map(idOf));
+          const fresh = incoming.filter((item) => item && !seen.has(idOf(item)));
+          if (!fresh.length) return 0;
+          secureStore.setItem(key, JSON.stringify(fresh.concat(existing)));
+          return fresh.length;
+        };
+        const restored = merge(LS.memory, data.memory, (fact) => String(fact.text || '').toLowerCase())
+          + merge(LS.skills, data.skills, (skill) => String(skill.name || '').toLowerCase())
+          + merge(LS.episodes, data.episodes, (episode) => episode.id)
+          + merge(LS.insights, data.insights, (insight) => String(insight.text || '').toLowerCase());
+        if (Array.isArray(data.notes) && BRAIN) {
+          let list = state.notes;
+          data.notes.slice(0, 200).forEach((n) => { list = BRAIN.addMemory(list, n && n.text, n && n.cat, n && n.ts, n && /^\d{4}-\d{2}-\d{2}$/.test(n.due || '') ? n.due : ''); });   // untrusted: re-validated
+          saveNotes(list);
+        }
+        paintMemory();
+        toast(restored ? `Import ho gaya — ${restored} cheez wapas aayi` : 'Import ho gaya');
       } catch (error) {
         toast('File padhi nahi ja saki.', true);
       }
@@ -1895,8 +2067,9 @@
     if (!security.enabled) return false;
     forgetSecret();
     security.dataKey = null;
-    state.chat = []; state.drafts = []; state.memory = [];
-    paintChat(); paintDrafts(); paintMemory();
+    vault.clear();
+    state.chat = []; state.drafts = []; state.notes = [];
+    paintChat(); paintDrafts(); paintNotes(); paintMemory();
     $('app').hidden = true;
     $('gate').hidden = true;
     $('lockScreen').hidden = false;
@@ -1912,7 +2085,7 @@
     state.cfg = cfg;                       // memory only: the key is never written back in plaintext
     await initDataKey(pin);
     await hydrate();
-    paintMemory();
+    paintNotes(); paintMemory();
     syncReminders();
     $('lockScreen').hidden = true;
     $('gate').hidden = true;
@@ -1941,6 +2114,294 @@
 
   function noteActivity() {
     if (security.lock) security.lock.touching();
+  }
+
+  /* ══════════════════════════════════════════════════════ LEARNING FROM CHAT
+
+     Clearing the screen must not throw away what the chat taught her. Before
+     the bubbles go, every user turn is mined for facts, every good answer is
+     turned into (or improves) a playbook, one episode row is written, and the
+     journal reflects on it. That is the loop that makes a new chat smarter
+     than the last one instead of resetting to zero.
+     ---------------------------------------------------------------------- */
+
+  function chatUserTurns() {
+    return state.chat.filter((m) => m.role === 'me' && m.text && !m.pending);
+  }
+
+  function precedingQuestion(message) {
+    const index = state.chat.indexOf(message);
+    for (let i = index - 1; i >= 0; i -= 1) {
+      if (state.chat[i].role === 'me' && state.chat[i].text) return state.chat[i].text;
+    }
+    return '';
+  }
+
+  /** Mine the open conversation. Returns a small, honest summary. */
+  function digestChat() {
+    const userTurns = chatUserTurns();
+    if (!userTurns.length || !memory) return null;
+
+    const newFacts = [];
+    const learnedSkills = [];
+    let liked = 0;
+    let disliked = 0;
+
+    state.chat.forEach((message) => {
+      if (message.role === 'me' && message.text) {
+        memory.observe(message.text, 'chat').forEach((fact) => newFacts.push(fact));
+      }
+      if (message.role === 'jenni' && message.text && !message.failed) {
+        if (message.rating === 'up') liked += 1;
+        if (message.rating === 'down') disliked += 1;
+        const question = precedingQuestion(message);
+        if (AGENT.skillFrom && question) {
+          const skill = AGENT.skillFrom(question, message.text);
+          if (skill) {
+            const saved = skills.learn(skill);
+            if (saved) learnedSkills.push(saved.name);
+          }
+        }
+      }
+    });
+
+    memory.compact();
+
+    /* Topics: the words the user kept coming back to. */
+    const counts = new Map();
+    userTurns.forEach((message) => {
+      (AGENT.tokens ? AGENT.tokens(message.text) : new Set()).forEach((word) => {
+        if (word.length < 4) return;
+        counts.set(word, (counts.get(word) || 0) + 1);
+      });
+    });
+    const topics = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([word]) => word);
+
+    let episode = null;
+    if (journal) {
+      episode = journal.addEpisode({
+        turns: userTurns.length,
+        topics,
+        facts: [...new Set(newFacts)],
+        skills: [...new Set(learnedSkills)],
+        liked,
+        disliked
+      });
+      journal.reflect({ liked, disliked, skills: learnedSkills });
+    }
+
+    return {
+      turns: userTurns.length,
+      facts: [...new Set(newFacts)],
+      skills: [...new Set(learnedSkills)],
+      insights: journal ? journal.insights().length : 0,
+      episode
+    };
+  }
+
+  /** Start a fresh chat, keeping everything it taught her. */
+  function clearChat() {
+    if (!state.chat.length) {
+      toast('Chat pehle se khali hai');
+      return;
+    }
+    const sure = window.confirm('Chat saaf kar dun? Jo baat samjhi wo yaad rahegi.');
+    if (!sure) return;
+    /* Phones that are mid-answer keep the turn; clearing would orphan it. */
+    if (state.busy) { toast('Ek jawab aa raha hai — ruk jao', true); return; }
+
+    const digest = digestChat();
+    state.chat = [];
+    writeJson(LS.chat, []);
+    paintChat();
+    paintMemory();
+
+    if (!digest) {
+      toast('Naya chat shuru', false);
+      return;
+    }
+    const bits = [];
+    if (digest.facts.length) bits.push(`${digest.facts.length} baat yaad`);
+    if (digest.skills.length) bits.push(`${digest.skills.length} playbook seekha`);
+    toast(bits.length
+      ? `Chat saaf — ${bits.join(', ')}`
+      : 'Chat saaf — naya kuch seekhne ko nahi mila', false);
+  }
+
+  /** 👍 / 👎 on one reply: the same reply is re-used or avoided next time. */
+  function rateReply(message, direction) {
+    if (!message || message.role !== 'jenni' || !message.text) return;
+    const previous = message.rating;
+    const value = message.rating === direction ? null : direction;   // tap again to undo
+    message.rating = value;
+    writeJson(LS.chat, state.chat.filter((m) => !m.pending));
+
+    const question = precedingQuestion(message);
+    if (value === 'up') {
+      if (memory) memory.reinforce(question + ' ' + message.text, 0.08);
+      if (skills && AGENT.skillFrom && question) {
+        const skill = AGENT.skillFrom(question, message.text);
+        if (skill) {
+          skill.rating = 1;
+          skill.example = question + ' → ' + message.text.slice(0, 400);
+          const saved = skills.learn(skill);
+          if (journal && saved) {
+            journal.addInsight({
+              kind: 'skill',
+              text: `${saved.name} jaisa jawab pasand aaya — usi tarah dobara dena`,
+              confidence: 0.6
+            });
+          }
+        }
+      }
+      toast('Yaad rakha — aise hi jawab dobara dungi');
+    } else if (value === 'down') {
+      if (memory) memory.weaken(message.text, 0.12);
+      if (skills) {
+        const matched = skills.match(question) || [];
+        matched.forEach((skill) => skills.rate(skill.name, -1));
+        if (journal) {
+          journal.addInsight({
+            kind: 'avoid',
+            text: `"${String(question).slice(0, 50)}" par aisa jawab pasand nahi aaya — tarika badalna`,
+            confidence: 0.55
+          });
+        }
+      }
+      toast('Samajh gayi — agli baar alag tarika');
+    } else if (previous === 'up') {
+      if (skills) {
+        const matched = skills.match(question) || [];
+        matched.forEach((skill) => skills.rate(skill.name, -1));
+      }
+    } else if (previous === 'down') {
+      if (skills) {
+        const matched = skills.match(question) || [];
+        matched.forEach((skill) => skills.rate(skill.name, 1));
+      }
+    }
+
+    paintChat();
+  }
+
+  /** What Jenni remembers, and the procedures she has learned. */
+  function paintMemory() {
+    if (!memory || !skills) return;
+    const facts = memory.all();
+    const learned = skills.custom();
+    const statusText = $('memoryStatusText');
+    const badge = $('memoryStatus');
+    if (statusText) {
+      statusText.textContent = facts.length
+        ? `${facts.length} baat yaad hai`
+        : 'Kuch yaad nahi';
+    }
+    if (badge) badge.className = 'status' + (facts.length ? ' is-ok' : '');
+
+    const list = $('memoryList');
+    if (list) {
+      list.innerHTML = '';
+      if (!facts.length) {
+        list.innerHTML = '<p class="field-hint">Abhi khali hai. "mera naam … hai" bolo, phir dekho.</p>';
+      }
+      facts.slice(0, 40).forEach((fact) => {
+        const card = document.createElement('div');
+        card.className = 'card card--tight';
+        const text = document.createElement('span');
+        text.className = 'card__meta';
+        text.textContent = fact.text;
+        const forget = document.createElement('button');
+        forget.type = 'button';
+        forget.className = 'btn btn--small btn--ghost';
+        forget.textContent = 'Bhool jao';
+        forget.addEventListener('click', () => {
+          memory.forget(fact.id);
+          paintMemory();
+        });
+        card.append(text, forget);
+        list.appendChild(card);
+      });
+    }
+
+    const summary = $('skillsSummary');
+    if (summary) {
+      summary.textContent = learned.length
+        ? `${skills.builtIn().length} built-in sikhai + ${learned.length} tumse seekhi`
+        : `${skills.builtIn().length} built-in playbooks tayaar — baat karte karte naye seekhegi`;
+    }
+    const skillList = $('skillList');
+    if (skillList) {
+      skillList.innerHTML = '';
+      learned.forEach((skill) => {
+        const card = document.createElement('div');
+        card.className = 'card card--tight';
+        const name = document.createElement('strong');
+        name.textContent = `${skill.name} · v${skill.version || 1}`;
+        if (Number(skill.rating) > 0) name.textContent += ' 👍';
+        if (Number(skill.rating) < 0) name.textContent += ' 👎';
+        const steps = document.createElement('span');
+        steps.className = 'card__meta';
+        steps.textContent = skill.steps.join(' → ');
+        card.append(name, steps);
+        skillList.appendChild(card);
+      });
+    }
+    paintJournal();
+  }
+
+  /** What cleared chats left behind: the strongest habits and the last few. */
+  function paintJournal() {
+    if (!journal) return;
+    const insights = journal.insights();
+    const episodes = journal.episodes();
+
+    const summary = $('journalSummary');
+    if (summary) {
+      summary.textContent = episodes.length
+        ? `${episodes.length} chat se seekha · ${insights.length} habit yaad`
+        : 'Abhi ek bhi chat clear nahi hui — clear karne par pehle seekhegi.';
+    }
+
+    const insightList = $('insightList');
+    if (insightList) {
+      insightList.innerHTML = '';
+      if (!insights.length) {
+        insightList.innerHTML = '<p class="field-hint">Abhi koi habit nahi bani. Kuch chats clear karo, ya jawab par 👍 dabao.</p>';
+      }
+      insights.slice(0, 6).forEach((insight) => {
+        const card = document.createElement('div');
+        card.className = 'card card--tight';
+        const text = document.createElement('span');
+        text.className = 'card__meta';
+        text.textContent = insight.text;
+        const strength = document.createElement('span');
+        strength.className = 'card__meta';
+        strength.textContent = `${Math.round((insight.confidence || 0.5) * 100)}%`;
+        card.append(text, strength);
+        insightList.appendChild(card);
+      });
+    }
+
+    const episodeList = $('episodeList');
+    if (episodeList) {
+      episodeList.innerHTML = '';
+      episodes.slice(0, 5).forEach((episode) => {
+        const card = document.createElement('div');
+        card.className = 'card card--tight';
+        const title = document.createElement('strong');
+        const when = new Date(episode.at || Date.now());
+        title.textContent = `${when.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · ${episode.turns} baat`;
+        const meta = document.createElement('span');
+        meta.className = 'card__meta';
+        const bits = [];
+        if ((episode.topics || []).length) bits.push(episode.topics.join(', '));
+        if ((episode.facts || []).length) bits.push(`${episode.facts.length} fact`);
+        if ((episode.skills || []).length) bits.push(`${episode.skills.length} skill`);
+        meta.textContent = bits.join(' · ') || '—';
+        card.append(title, meta);
+        episodeList.appendChild(card);
+      });
+    }
   }
 
   async function submitUnlock() {
@@ -1988,9 +2449,13 @@
     const cfg = await openVault(pin);
     await initDataKey(pin);
     await hydrate();                       // make sure the decrypted data is in memory first
+    await flushVault();
     security.enabled = false;
-    await persistAll();                    // back to plaintext (user's choice)
-    ['chat', 'drafts', 'memory'].forEach((n) => localStorage.removeItem(LS[n] + '_enc'));
+    SECURE_KEYS.forEach((key) => {                    // back to plaintext (user's choice)
+      if (vault.has(key)) localStorage.setItem(key, vault.get(key));
+      localStorage.removeItem(key + '_enc');
+    });
+    vault.clear();
     localStorage.removeItem(LS.dk);
     security.dataKey = null;
     localStorage.setItem(LS.config, JSON.stringify(cfg));
@@ -2288,7 +2753,7 @@
     if (!BRAIN) return;
     const day = new Date().toISOString().slice(0, 10);
     try { if (localStorage.getItem('jenni_brief_day') === day) return; } catch (e) { return; }
-    const text = BRAIN.briefing(loadMemory());
+    const text = BRAIN.briefing(loadNotes());
     try { localStorage.setItem('jenni_brief_day', day); } catch (e) { /* ignore */ }
     if (text) { state.chat.push({ role: 'jenni', text }); persist('chat'); }
   }
@@ -2444,9 +2909,9 @@
         const nm = nmClient();
         if (!nm) { say('Pehle NeverMind connect karo.', 'error'); return; }
         try {
-          let list = loadMemory(); const before = list.length;
+          let list = loadNotes(); const before = list.length;
           (await nm.memories()).slice(0, 30).forEach((t) => { list = BRAIN.addMemory(list, 'NeverMind: ' + t, 'school'); });
-          saveMemory(list); say((list.length - before) + ' nayi memory aayi.', 'ok');
+          saveNotes(list); say((list.length - before) + ' nayi memory aayi.', 'ok');
         } catch (error) { say(error.message, 'error'); }
       });
       const paintPacks = () => {
@@ -2487,28 +2952,10 @@
         const box = $('memInput');
         if (!box.value.trim()) return;
         const cmd = BRAIN.userCommand(box.value);
-        saveMemory(cmd ? BRAIN.applyOps(loadMemory(), [cmd]) : BRAIN.addMemory(loadMemory(), box.value, null));
+        saveNotes(cmd ? BRAIN.applyOps(loadNotes(), [cmd]) : BRAIN.addMemory(loadNotes(), box.value, null));
         box.value = '';
       });
-      $('btnMemExport').addEventListener('click', () => {
-        const blob = new Blob([JSON.stringify({ app: 'jenni', v: 1, memory: loadMemory(), packs: loadPacks() }, null, 2)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob); a.download = 'jenni-memory-' + new Date().toISOString().slice(0, 10) + '.json';
-        document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-      });
-      $('btnMemImport').addEventListener('click', () => $('memFile').click());
-      $('memFile').addEventListener('change', async (ev) => {
-        try {
-          const data = JSON.parse(await ev.target.files[0].text());
-          let list = loadMemory(); const before = list.length;
-          (Array.isArray(data.memory) ? data.memory : []).slice(0, 200).forEach((m) => {
-            list = BRAIN.addMemory(list, m && m.text, m && m.cat, m && m.ts, m && m.due && /^\d{4}-\d{2}-\d{2}$/.test(m.due) ? m.due : '');   // re-validated: imports are untrusted
-          });
-          saveMemory(list); toast((list.length - before) + ' memory import hui', false);
-        } catch (error) { toast('File padhi nahi ja saki', true); }
-        ev.target.value = '';
-      });
-      $('btnMemClear').addEventListener('click', () => { if (confirm('Saari memory delete karein?')) saveMemory([]); });
+      $('btnMemClear').addEventListener('click', () => { if (confirm('Saari memory delete karein?')) saveNotes([]); });
       paintMemory();
     }
 
@@ -2636,6 +3083,38 @@
       }
     });
 
+    $('btnNewChat').addEventListener('click', clearChat);
+
+    if ($('btnJournalRefresh')) {
+      $('btnJournalRefresh').addEventListener('click', () => {
+        paintJournal();
+        toast('Journal refresh ho gaya', false);
+      });
+    }
+    if ($('btnJournalClear')) {
+      $('btnJournalClear').addEventListener('click', () => {
+        const sure = window.confirm('Journal (episodes + habits) saaf kar dun? Memory aur skills rahenge.');
+        if (!sure) return;
+        journal.clear();
+        paintJournal();
+        toast('Journal saaf ho gaya', false);
+      });
+    }
+
+    $('btnMemoryRefresh').addEventListener('click', () => {
+      paintMemory();
+      toast('Memory refresh ho gayi', false);
+    });
+    $('btnMemoryClear').addEventListener('click', () => {
+      const sure = window.confirm('Jenni jo yaad rakhti hai — sab bhool jayegi. Pakka?');
+      if (!sure) return;
+      memory.clear();
+      skills.clear();
+      if (journal) journal.clear();
+      paintMemory();
+      toast('Sab bhool gayi', false);
+    });
+
     $('btnPanic').addEventListener('click', () => {
       const sure = window.confirm('Sab kuch mit jayega — key, PIN, drafts, chat. Pakka?');
       if (sure) panicWipe();
@@ -2721,6 +3200,7 @@
     wireApp();
     wireBot();
     paintSecurity();
+    paintMemory();
 
     /* Three honest states on boot:
          vault + PIN  → locked until the PIN is typed
@@ -2728,7 +3208,7 @@
          nothing      → the setup gate                                        */
     if (security.enabled && localStorage.getItem(LS.vault)) {
       state.cfg = null;                      // never hold the key while locked
-      state.chat = []; state.drafts = []; state.memory = [];
+      state.chat = []; state.drafts = []; state.notes = [];
       $('gate').hidden = true;
       $('app').hidden = true;
       $('lockScreen').hidden = false;

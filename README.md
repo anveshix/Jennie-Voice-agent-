@@ -266,6 +266,50 @@ so it travels with whichever provider you plug in.
   me jawab nahi diya.") and offers **Phir try karo**, which resends the same question — no more stacked
   "Maaf karo…" paragraphs, and failed bubbles are never replayed to the model.
 
+## Clearing the chat is a lesson, not a reset
+
+The app bar's **↺ Naya chat** button runs a digest *before* the screen empties:
+
+1. every user turn is mined for durable facts (`memory.observe`);
+2. every answer that reads like a procedure becomes or improves a versioned playbook;
+3. one **episode** row is written (`jenni_episodes_v1`, capped at 30) — turns, topics, facts, skills;
+4. the journal reflects on it and keeps at most 8 **insights** (`jenni_insights_v1`).
+
+Those insights are injected into the system prompt of the *next* chat, so a new chat starts
+from what the old one learned instead of from zero. That is the outer loop: `run()` reflects
+inside one answer, the journal carries the result across sessions.
+
+**👍 / 👎 on any reply** is the second signal. 👍 lifts the confidence of the facts in that
+exchange, attaches the exchange to its playbook as a worked example, and the playbook wins
+ties in `match()`. 👎 lowers the confidence of the guesses it contained, drops the playbook's
+`rating`, and records an "avoid this" insight. Tapping the same button again undoes it.
+
+**Setup → 6. Journal** shows what was learned: habits with a confidence %, the last episodes,
+**Journal saaf karo** (journal only) and **Sab bhool jao** (memory + skills + journal).
+Export now includes memory, learned skills, episodes and insights — never the key — and import
+*merges* instead of replacing, so restoring an old backup on a phone that already learned
+something keeps both.
+
+## Memory, skills and self-check (the agent layer)
+
+The phone app borrows what worked in 2026's personal agents and rebuilds it dependency-free
+in the browser (`docs/agent.js`, plain localStorage, no server):
+
+| Borrowed from | What it became here |
+|---|---|
+| mem0 / Graphiti | **Fact memory** — name, city, age, studies, goals, likes, language. Each fact carries confidence, a hit count and a timestamp; recall scores relevance + freshness, so a stale low-value fact sinks. `MAX_FACTS = 120` with compaction. |
+| Hermes Agent | **Learned, versioned skills** — 7 built-in playbooks (leave application, study plan, email, code help, mood support, summarise, daily plan) plus procedures learned from real answers, each with `version` bumped on re-learning (`MAX_SKILLS = 40`). |
+| deep-agents | **Plan → act → reflect with a budget** — an answer that is empty, too thin for a plan-shaped question, or a refusal to make a file gets exactly one improved second pass, then stops. |
+| OpenClaw / MCP | **Tool registry with permissions** — handlers are registered with a permission level; nothing gets shell, filesystem or network access beyond the app's own allowlist. |
+
+- **Memory** lives in Setup → Memory: every fact with its confidence, plus **Refresh** and
+  **Sab bhool jao**. It is injected into the system prompt only when relevant — never recited as a list.
+- **Skills** live in Setup → Skills, showing built-in and learned procedures separately.
+- Both are `jenni_memory_v1` / `jenni_skills_v1` in localStorage: gone on **Erase everything**,
+  never sent anywhere except as prompt context to your own provider.
+- **Small talk is not "fixed".** A greeting answered in one line stays one call — the reflect pass is
+  skipped for it, so the extra round-trip only buys something on real questions.
+
 ## Privacy and limits
 
 - Each chat request sends the user's message and recent turns from the current tab to the configured AI provider. The conversation stays in tab memory only; it is not written to the app's server or browser storage.
@@ -322,7 +366,7 @@ Skills (official letters, lesson plans, result diagnostics, planner, commerce tu
 
 ## Encrypted chat history
 
-With a PIN set, **chat, drafts and memory** are stored only as AES-256-GCM blobs (`*_v1_enc`), under a key derived from the PIN (PBKDF2-SHA256, 210k, own salt) that lives in memory only while unlocked. Locking (manual, idle, tab hide) clears them from memory and the page; nothing is written while locked. Setting, changing or removing the PIN re-encrypts/migrates existing data. Unlocking no longer writes the API key back to storage in plaintext. Forget the PIN and the data is unrecoverable — use Memory → Export for a backup first.
+With a PIN set, **chat, drafts, notes and the agent's facts, playbooks and journal** are stored only as AES-256-GCM blobs (`*_v1_enc`), under a key derived from the PIN (PBKDF2-SHA256, 210k, own salt) that lives in memory only while unlocked. Locking (manual, idle, tab hide) clears them from memory and the page; nothing is written while locked. Setting, changing or removing the PIN re-encrypts/migrates existing data. Unlocking no longer writes the API key back to storage in plaintext. Forget the PIN and the data is unrecoverable — use Setup → Backup → Export data first.
 
 Phone use (GitHub Pages app) has no server, so `JENNI_ACCESS_TOKEN` is not needed there; it only matters if you deploy the Node server. For the NeverMind bridge from the phone, set `NEVERMIND_API_TOKEN`.
 

@@ -172,6 +172,7 @@ async function boot(options = {}) {
   window.eval(fs.readFileSync(path.join(ROOT, 'brain.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'remind-store.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'connectors.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'agent.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'));
   await wait(180);
 
@@ -422,7 +423,9 @@ function submit(window, text) {
   /* ── security: PIN, encrypted key, cooldown, wipe ──────────────────────── */
   b = await boot({ cfg: null, seed: {
     jenni_chat_v1: JSON.stringify([{ role: 'me', text: 'MARKER-PRIVATE-CHAT' }]),
-    jenni_memory_v1: JSON.stringify([{ id: 'm1', text: 'MARKER-PRIVATE-MEM', cat: 'fact', ts: 1 }]),
+    jenni_notes_v1: JSON.stringify([{ id: 'm1', text: 'MARKER-PRIVATE-MEM', cat: 'fact', ts: 1 }]),
+    jenni_memory_v1: JSON.stringify([{ id: 'f1', kind: 'fact', text: 'MARKER-PRIVATE-FACT', hits: 1, confidence: 0.9, at: '2026-11-01' }, { id: 'old', text: 'MARKER-LEGACY-NOTE', cat: 'fact', ts: 1 }]),
+    jenni_skills_v1: JSON.stringify([{ name: 'MARKER-PRIVATE-SKILL', triggers: ['zzz'], steps: ['a'] }]),
     jenni_drafts_v1: JSON.stringify([{ id: 'd1', title: 't', text: 'MARKER-PRIVATE-DRAFT', at: '' }])
   } });
   ok(b.$('gatePinWrap') !== null, 'gate offers an optional PIN');
@@ -451,7 +454,7 @@ function submit(window, text) {
   const LSx = b.window.localStorage;
   const allStored = Object.keys(LSx).map((k) => LSx.getItem(k)).join('|');
   ok(!allStored.includes('MARKER-PRIVATE'), 'no chat/memory/draft text is readable in storage after PIN');
-  ok(['chat', 'memory', 'drafts'].every((n) => LSx.getItem('jenni_' + n + '_v1_enc') && LSx.getItem('jenni_' + n + '_v1') === null), 'chat, memory and drafts are stored only as encrypted blobs');
+  ok(['chat', 'notes', 'drafts', 'memory', 'skills'].every((n) => LSx.getItem('jenni_' + n + '_v1_enc') && LSx.getItem('jenni_' + n + '_v1') === null), 'chat, notes, drafts, agent facts and skills are stored only as encrypted blobs');
   ok(JSON.parse(LSx.getItem('jenni_chat_v1_enc')).data && JSON.parse(LSx.getItem('jenni_chat_v1_enc')).iv, 'blob is AES-GCM (iv + data)');
 
   /* locking hides the app and drops the key from memory */
@@ -479,7 +482,9 @@ function submit(window, text) {
   ok(b.$('brandMeta').textContent.includes('Groq'), 'the provider is restored from the vault', b.$('brandMeta').textContent);
   ok(b.window.localStorage.getItem('jenni_cfg_v1') === null, 'unlocking does not write the key back in plaintext');
   ok(b.window.document.body.textContent.includes('MARKER-PRIVATE-CHAT'), 'chat history is decrypted after the right PIN');
-  ok(b.window.document.body.textContent.includes('MARKER-PRIVATE-MEM'), 'memory is decrypted after the right PIN');
+  ok(b.window.document.body.textContent.includes('MARKER-PRIVATE-MEM'), 'notes are decrypted after the right PIN');
+  ok(b.window.document.body.textContent.includes('MARKER-PRIVATE-FACT'), 'agent facts are decrypted after the right PIN');
+  ok(JSON.parse(b.window.localStorage.getItem('jenni_notes_v1_enc')).data.length > 10, 'notes blob exists after unlock');
 
   /* the setup field shows a mask, never the real key */
   b.$('btnOpenSetup').click();
@@ -761,12 +766,305 @@ function submit(window, text) {
   await wait(150);
   b.dom.window.close();
 
+  /* ── agent core: memory, skills, self-check ───────────────────────────── */
+
+  /* the pure core, tested without a browser */
+  const A = require(path.join(ROOT, 'agent.js'));
+
+  /* 1. a fact said once is remembered, survives a reload, and reaches the prompt */
+  b = await boot({ script: ['Yaad rakh liya.', 'Theek hai.'] });
+  submit(b.window, 'mera naam Aarav hai');
+  await wait(700);
+  const storedFacts = JSON.parse(b.window.localStorage.getItem('jenni_memory_v1') || '[]');
+  ok(storedFacts.some((f) => /aarav/i.test(f.text)), 'a name is stored as a fact', storedFacts.map((f) => f.text).join(';'));
+
+  /* it shows in the Setup panel … */
+  b.$('memoryList').dataset.x = '';
+  b.window.document.querySelector('[data-tab="setup"]').click();
+  await wait(120);
+  const panelText = b.$('memoryList').textContent;
+  ok(/aarav/i.test(panelText), 'the Memory panel shows the fact', panelText.slice(0, 80));
+
+  /* … and it comes back after a reload, inside the system prompt */
+  const remembered = b.window.localStorage.getItem('jenni_memory_v1');
+  b.dom.window.close();
+  b = await boot({ seed: { jenni_memory_v1: remembered }, script: ['Haan, Aarav.', 'Theek hai.'] });
+  submit(b.window, 'mujhe kya naam se bulana chahiye');
+  await wait(700);
+  const memoryBody = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body);
+  const systemText = memoryBody.messages[0].content;
+  const systemText0 = systemText;
+  ok(/Aarav/i.test(systemText), 'the remembered fact is sent in the system prompt', systemText.slice(-120));
+
+  /* "Sab bhool jao" really empties it */
+  b.window.confirm = () => true;
+  b.$('btnMemoryClear').click();
+  await wait(120);
+  const afterWipe = JSON.parse(b.window.localStorage.getItem('jenni_memory_v1') || '[]');
+  ok(afterWipe.length === 0, '“Sab bhool jao” empties the memory', String(afterWipe.length));
+  ok(!/aarav/i.test(b.$('memoryList').textContent), 'the emptied panel clears too');
+  b.dom.window.close();
+
+  /* 2. a leave request carries the learned playbook, not just the question */
+  b = await boot({ script: ['Ye raha draft.', 'Theek hai.'] });
+  submit(b.window, 'leave application likhni hai');
+  await wait(700);
+  const leaveBody = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body);
+  const leaveSystem = leaveBody.messages[0].content;
+  ok(/Leave-application|leave application/i.test(leaveSystem), 'the leave playbook is injected', leaveSystem.slice(-140));
+  ok(/date|reason|principal|class/i.test(leaveSystem), 'the playbook carries real steps');
+  b.dom.window.close();
+
+  /* 3. a thin answer to a plan question triggers one self-check call, then improves */
+  b = await boot({ script: ['haan', 'Pehle syllabus 4 hisson me baanto, phir roz 2 ghante padho aur har Sunday test do.', 'Theek hai.'] });
+  submit(b.window, 'study plan kaise banaun');
+  await wait(900);
+  const planCalls = b.calls.filter((c) => c.url.includes('chat/completions'));
+  ok(planCalls.length >= 2, 'a thin plan answer is re-asked once', String(planCalls.length));
+  const finalBubble = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
+  ok(finalBubble.includes('syllabus'), 'the better second answer is the one shown', finalBubble.slice(0, 80));
+  b.dom.window.close();
+
+  /* 4. a greeting stays one call — no wasted second round-trip */
+  b = await boot({ script: ['Namaste! Batao kya karna hai.'] });
+  submit(b.window, 'namaste');
+  await wait(700);
+  ok(b.calls.filter((c) => c.url.includes('chat/completions')).length === 1, 'a greeting is answered in one call');
+  b.dom.window.close();
+
+  /* 4b. the persona is pointed at 2026-27 → 2030, not stale knowledge */
+  ok(/2027-2030/.test(systemText0), 'the prompt asks for 2026-27 to 2030 thinking');
+
+  /* 5. the core's own units */
+  ok(A.critiqueAnswer('haan', 'study plan banao').ok === false, 'critique: a bare “haan” is too thin');
+  ok(A.critiqueAnswer('Theek hai.', 'namaste').ok === true, 'critique: a short greeting reply is fine');
+  ok(A.critiqueAnswer('Main file nahi bana sakti.', 'leave application file banao').ok === false, 'critique: a refusal is caught');
+  ok(A.critiqueAnswer('Kal subah 6 baje utho, 2 ghante padho aur raat ko 30 min revision karo.', 'kaise padhun').ok === true, 'critique: a real plan passes');
+
+  /* skills are learned, versioned and matched */
+  const store = { data: {}, getItem(k) { return this.data[k] || null; }, setItem(k, v) { this.data[k] = v; }, removeItem(k) { delete this.data[k]; } };
+  const skills = A.createSkills(store);
+  ok(skills.match('leave application likhni hai').length > 0, 'a leave request matches its playbook');
+  ok(skills.match('aaj mausam kaisa hai').length === 0, 'an unrelated question matches nothing');
+  const v1 = skills.learn({ name: 'leave application', steps: ['step one', 'step two'] });
+  const v2 = skills.learn({ name: 'leave application', steps: ['step one', 'step two', 'step three'] });
+  ok(v1 && v1.version === 1, 'a new skill starts at v1', String(v1 && v1.version));
+  ok(v2 && v2.version === 2 && v2.steps.length === 3, 're-learning the same skill bumps the version', JSON.stringify(v2 && v2.version));
+  ok(skills.all().filter((s) => s.source === 'learned').length === 1, 'a learned skill replaces, never duplicates');
+
+  /* memory recall prefers relevance and drops duplicates */
+  const mem = A.createMemory(store);
+  mem.observe('mera naam Aarav hai');
+  mem.observe('mera naam Aarav hai');
+  ok(mem.all().filter((f) => /aarav/i.test(f.text)).length === 1, 'a repeated fact is not duplicated');
+  ok(mem.recall('mera naam kya hai')[0].text.includes('Aarav'), 'recall ranks the relevant fact first');
+
+  /* ── chat clear learns first, then wipes the screen ───────────────────── */
+
+  b = await boot({ script: ['Theek hai, likh diya.', 'Chalo phir.'] });
+  b.window.confirm = () => true;
+
+  /* an empty chat has nothing to clear */
+  b.$('btnNewChat').click();
+  await wait(80);
+  const emptyToast = b.$('toastHost').textContent;
+  ok(/pehle se khali/.test(emptyToast), 'clearing an empty chat says so', emptyToast.slice(0, 60));
+
+  submit(b.window, 'mera naam Aarav hai');
+
+  /* a step-by-step answer becomes a playbook … */
+  b = await boot({
+    script: [
+      'Theek hai. Plan aisa: 1. Syllabus ko 4 hisson me baanto. 2. Roz 2 ghante padho, subah 6 se 8. 3. Har Sunday ek chhota test do. 4. Weak topic par extra 30 min. 5. Har raat 10 min revision karo.',
+      'Chalo phir.'
+    ]
+  });
+  submit(b.window, 'study plan banao');
+  await wait(600);
+  const planLearned = JSON.parse(b.window.localStorage.getItem('jenni_skills_v1') || '[]');
+  ok(planLearned.length >= 1, 'a step-by-step answer is saved as a playbook', String(planLearned.length));
+
+  /* 👍 keeps it, and lifts its rating */
+  const bubbles = [...b.window.document.querySelectorAll('.msg--jenni')];
+  const upBtn = bubbles[bubbles.length - 1].querySelector('.msg__tool--rate');
+  ok(Boolean(upBtn), 'every reply has a 👍 button');
+  upBtn.click();
+  await wait(120);
+  const rated = JSON.parse(b.window.localStorage.getItem('jenni_skills_v1') || '[]');
+  ok(rated.some((skill) => Number(skill.rating) > 0), '👍 raises the playbook rating', JSON.stringify(rated.map((s) => s.rating)));
+  ok(b.window.document.querySelector('.msg__tool--rate.is-on') !== null, 'the pressed rating is visible');
+  ok(/pasand aaya|Yaad rakha/i.test(b.$('toastHost').textContent), '👍 confirms it was remembered');
+
+  /* 👎 on the same reply undoes it */
+  const downBtn = bubbles[bubbles.length - 1].querySelectorAll('.msg__tool--rate')[1];
+  downBtn.click();
+  await wait(120);
+  const disliked = JSON.parse(b.window.localStorage.getItem('jenni_skills_v1') || '[]');
+  ok(disliked.some((skill) => Number(skill.rating) < 0), '👎 pushes the playbook down instead');
+  b.dom.window.close();
+
+  /* ── clear chat: screen empties, knowledge stays, journal grows ───────── */
+
+  b = await boot({ script: ['Haan, note kar liya.', 'Theek hai.', 'Aur batao.'] });
+  b.window.confirm = () => true;
+  submit(b.window, 'mera naam Aarav hai aur Patna me rehta hoon');
+  await wait(500);
+  submit(b.window, 'study plan banao');
+  await wait(600);
+  ok(b.window.document.querySelectorAll('.msg').length >= 4, 'the chat has real turns first');
+
+  const factsBefore = JSON.parse(b.window.localStorage.getItem('jenni_memory_v1') || '[]').length;
+  b.$('btnNewChat').click();
+  await wait(250);
+
+  ok(b.window.document.querySelectorAll('.msg').length === 0, 'clearing empties the conversation');
+  ok((b.window.localStorage.getItem('jenni_chat_v1') || '[]') === '[]', 'the saved chat is emptied too');
+  const factsAfter = JSON.parse(b.window.localStorage.getItem('jenni_memory_v1') || '[]');
+  ok(factsAfter.length >= factsBefore, 'the facts survive the clear', `${factsBefore}→${factsAfter.length}`);
+  ok(factsAfter.some((fact) => /aarav/i.test(fact.text)), 'the name is still remembered after the clear');
+
+  const episodes = JSON.parse(b.window.localStorage.getItem('jenni_episodes_v1') || '[]');
+  ok(episodes.length === 1, 'one episode row is written for the cleared chat', String(episodes.length));
+  ok(episodes[0].turns >= 2, 'the episode counts the turns', String(episodes[0].turns));
+  ok(/saaf|yaad/i.test(b.$('toastHost').textContent), 'the toast says what was kept', b.$('toastHost').textContent.slice(0, 70));
+
+  /* the cleared chat still leaves a next-chat hint in the prompt */
+  submit(b.window, 'kya yaad hai tujhe');
+  await wait(600);
+  const afterClearBody = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body);
+  const afterClearSystem = afterClearBody.messages[0].content;
+  ok(/Aarav/i.test(afterClearSystem), 'memory still reaches the prompt after the clear');
+  b.dom.window.close();
+
+  /* ── the loop closes: a stated taste comes back in the next chat ──────── */
+
+  b = await boot({
+    seed: {
+      jenni_insights_v1: JSON.stringify([
+        { id: 'i1', text: 'Step-by-step jawab pasand aate hain', kind: 'taste', confidence: 0.7, hits: 2, at: new Date().toISOString() }
+      ])
+    },
+    script: ['Theek hai, yaad hai.']
+  });
+  submit(b.window, 'kuch batao');
+  await wait(500);
+  const habitBody = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body);
+  ok(/pasand aate hain/.test(habitBody.messages[0].content), 'a learned habit is used in the next chat', habitBody.messages[0].content.slice(-120));
+  b.dom.window.close();
+
+  /* ── the journal panel is honest and wipeable ─────────────────────────── */
+
+  b = await boot({
+    seed: {
+      jenni_episodes_v1: JSON.stringify([{ id: 'e1', at: new Date().toISOString(), turns: 3, topics: ['leave'], facts: ['name: Aarav'], skills: ['Leave application'], liked: 1, disliked: 0 }]),
+      jenni_insights_v1: JSON.stringify([{ id: 'i1', text: 'Chhote jawab pasand hain', kind: 'taste', confidence: 0.6, hits: 1, at: new Date().toISOString() }])
+    }
+  });
+  b.window.document.querySelector('[data-tab="setup"]').click();
+  await wait(150);
+  ok(/1 chat se seekha/.test(b.$('journalSummary').textContent), 'the journal panel counts chats', b.$('journalSummary').textContent);
+  ok(/Chhote jawab/.test(b.$('insightList').textContent), 'the habit is listed');
+  ok(/3 baat/.test(b.$('episodeList').textContent), 'the episode row is listed');
+
+  b.window.confirm = () => true;
+  b.$('btnJournalClear').click();
+  await wait(150);
+  ok((b.window.localStorage.getItem('jenni_episodes_v1') || '') === '', 'clearing the journal removes episodes');
+  ok(/Abhi ek bhi chat clear nahi hui/.test(b.$('journalSummary').textContent), 'the panel returns to its empty state');
+  b.dom.window.close();
+
+  /* ── journal units: capped, deduped, and it decays like memory ────────── */
+
+  const journalStore = { data: {}, getItem(k) { return this.data[k] || null; }, setItem(k, v) { this.data[k] = v; }, removeItem(k) { delete this.data[k]; } };
+  const journal = A.createJournal(journalStore);
+  for (let i = 0; i < 35; i += 1) journal.addEpisode({ turns: i + 1, topics: ['t' + i] });
+  ok(journal.episodes().length === 30, 'episodes are capped at 30', String(journal.episodes().length));
+  ok(journal.episodes()[0].turns === 35, 'the newest episode is first');
+
+  journal.addInsight({ text: 'same habit' });
+  journal.addInsight({ text: 'same habit' });
+  const habits = journal.insights();
+  ok(habits.length === 1 && habits[0].hits === 2, 'a repeated habit is reinforced, not duplicated', JSON.stringify(habits));
+  for (let i = 0; i < 12; i += 1) journal.addInsight({ text: 'habit number ' + i });
+  ok(journal.insights().length === 8, 'insights are capped at 8', String(journal.insights().length));
+
+  const made = journal.reflect({ liked: 3, disliked: 3, skills: ['Leave application', 'Study plan'] });
+  ok(made.length >= 2, 'reflection produces habits from real evidence', String(made.length));
+  ok(journal.insights().some((item) => /Step-by-step/.test(item.text)), 'a taste for step-by-step is distilled');
+  journal.clear();
+  ok(journal.episodes().length === 0 && journal.insights().length === 0, 'journal clear empties both lists');
+
+  /* 👍 on a fact makes it steadier, 👎 makes it fade */
+  const memStore = { data: {}, getItem(k) { return this.data[k] || null; }, setItem(k, v) { this.data[k] = v; }, removeItem(k) { delete this.data[k]; } };
+  const mem2 = A.createMemory(memStore);
+  mem2.observe('mujhe coffee pasand hai');
+  const startConfidence = mem2.all()[0].confidence;
+  ok(mem2.reinforce('mujhe coffee pasand hai', 0.1) === 1, 'reinforce finds the matching fact');
+  ok(mem2.all()[0].confidence > startConfidence, 'a 👍 lifts confidence', mem2.all()[0].confidence.toFixed(2));
+  ok(mem2.weaken('mujhe coffee pasand hai', 0.2) === 1, 'weaken finds it too');
+  ok(mem2.all()[0].confidence < startConfidence, 'a 👎 lowers it', mem2.all()[0].confidence.toFixed(2));
+
+  /* skills carry their rating into match order */
+  const rateStore = { data: {}, getItem(k) { return this.data[k] || null; }, setItem(k, v) { this.data[k] = v; }, removeItem(k) { delete this.data[k]; } };
+  const rateSkills = A.createSkills(rateStore);
+  const learnedSkill = rateSkills.learn({ name: 'monday plan', steps: ['a', 'b'], triggers: ['monday'] });
+  ok(Boolean(rateSkills.rate(learnedSkill.name, 1)), 'a skill can be rated by name');
+  ok(Number(rateSkills.custom()[0].rating) === 1, 'the rating is stored', String(rateSkills.custom()[0].rating));
+  ok(rateSkills.rate('kuch bhi nahi', 1) === null, 'rating an unknown skill is a no-op');
+
+  /* ── backup carries the learning, and a restore merges ────────────────── */
+
+  b = await boot({
+    seed: {
+      jenni_memory_v1: JSON.stringify([{ id: 'f1', kind: 'name', text: 'name: Aarav', hits: 2, confidence: 0.9, at: new Date().toISOString() }]),
+      jenni_skills_v1: JSON.stringify([{ id: 's1', name: 'monday plan', steps: ['a', 'b'], triggers: ['monday'], version: 2, rating: 1 }]),
+      jenni_insights_v1: JSON.stringify([{ id: 'i1', text: 'Chhote jawab', confidence: 0.6, hits: 1, at: new Date().toISOString() }])
+    }
+  });
+  let grabbed = null;
+  const realCreate = b.window.URL.createObjectURL;
+  b.window.URL.createObjectURL = (blob) => { grabbed = blob; return 'blob:fake'; };
+  b.$('btnExport').click();
+  await wait(120);
+  ok(Boolean(grabbed), 'export produces a file');
+  const backupText = await grabbed.text();
+  const backup = JSON.parse(backupText);
+  ok(Array.isArray(backup.memory) && backup.memory.length === 1, 'the backup carries memory');
+  ok(Array.isArray(backup.skills) && backup.skills[0].rating === 1, 'the backup carries learned skills with ratings');
+  ok(Array.isArray(backup.insights) && backup.insights.length === 1, 'the backup carries habits');
+  ok(!JSON.stringify(backup).includes('test-key-123'), 'the key is never in the backup');
+  b.window.URL.createObjectURL = realCreate;
+  b.dom.window.close();
+
+  /* restore into a phone that already knows a newer fact — nothing is lost */
+  b = await boot({
+    seed: {
+      jenni_memory_v1: JSON.stringify([{ id: 'f2', kind: 'place', text: 'place: Patna', hits: 1, confidence: 0.8, at: new Date().toISOString() }])
+    }
+  });
+  const importFile = b.$('importFile');
+  const file = new b.window.File([backupText], 'jenni-backup.json', { type: 'application/json' });
+  Object.defineProperty(importFile, 'files', { value: [file], configurable: true });
+  importFile.dispatchEvent(new b.window.Event('change', { bubbles: true }));
+  await wait(400);
+  const mergedMemory = JSON.parse(b.window.localStorage.getItem('jenni_memory_v1') || '[]');
+  ok(mergedMemory.length === 2, 'import merges both sides instead of replacing', JSON.stringify(mergedMemory.map((f) => f.text)));
+  ok(mergedMemory.some((fact) => /Aarav/.test(fact.text)) && mergedMemory.some((fact) => /Patna/.test(fact.text)), 'both the old and the restored facts are there');
+  ok(JSON.parse(b.window.localStorage.getItem('jenni_skills_v1') || '[]').length === 1, 'the restored skill lands too');
+  ok(/wapas aayi/.test(b.$('toastHost').textContent), 'the restore says what came back', b.$('toastHost').textContent.slice(0, 60));
+  b.dom.window.close();
+
   /* ── failures stay readable ────────────────────────────────────────────── */
   b = await boot({ fail: true });
   submit(b.window, 'hello');
   await wait(220);
   const last = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].pop();
   ok(last.textContent.includes('Key galat'), '401 explains itself in plain words');
+  b.dom.window.close();
+
+  /* ── legacy notes stored under agent.js's key are split out once ───────── */
+  b = await boot({ seed: { jenni_memory_v1: JSON.stringify([{ id: 'n1', text: 'old note', cat: 'task', ts: 1 }, { id: 'f9', kind: 'fact', text: 'a fact', hits: 1, confidence: 0.9, at: '2026' }]) } });
+  ok(/old note/.test(b.window.localStorage.getItem('jenni_notes_v1') || '') && !/old note/.test(b.window.localStorage.getItem('jenni_memory_v1') || '') && /a fact/.test(b.window.localStorage.getItem('jenni_memory_v1') || ''), 'legacy notes move out of the agent facts key');
   b.dom.window.close();
 
   /* ── master voice switch + memory ─────────────────────────────────────── */
@@ -778,7 +1076,7 @@ function submit(window, text) {
   ok(!doc.body.classList.contains('voice-off'), 'voice master ON restores mic');
   doc.getElementById('memInput').value = 'Class 12 SA1 Monday';
   doc.getElementById('btnMemAdd').click();
-  ok(/SA1/.test(b.window.localStorage.getItem('jenni_memory_v1') || ''), 'memory add persists');
+  ok(/SA1/.test(b.window.localStorage.getItem('jenni_notes_v1') || ''), 'memory add persists');
   b.dom.window.close();
 
   console.log('\n' + checks + ' checks, ' + (checks - failures) + ' passed' + (failures ? ', ' + failures + ' FAILED' : ''));

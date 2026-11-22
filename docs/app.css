@@ -1093,6 +1093,10 @@ code {
 .label-row__link:hover { color: #99f6e4; }
 
 /* document download + retry sit next to Save draft / Copy */
+.msg__tool--rate { font-size: 13px; line-height: 1; padding: 5px 7px; }
+.msg__tool--rate.is-on { border-color: rgba(46, 230, 168, 0.55); color: var(--mint); background: rgba(46, 230, 168, 0.1); }
+.msg__tool--rate[aria-pressed='true'] { font-weight: 700; }
+
 .msg__tool--doc {
   color: #5eead4;
   border-color: rgba(94, 234, 212, .35);
@@ -1103,5 +1107,13 @@ code {
   border-color: rgba(252, 211, 77, .35);
 }
 .msg__tool--retry:hover { background: rgba(252, 211, 77, .12); }
-.voice-off #btnMic,.voice-off #btnVoice,.voice-off #btnStopSpeak,.voice-off #btnVoiceTest,.voice-off #btnVoiceStart{display:none!important}
-.voice-off #btnVoiceMaster{color:var(--muted,#8a94a6);border-color:transparent}
+
+/* memory cards: one line of text + a small forget button */
+.card--tight {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+}
+.card--tight .card__meta { font-size: 13px; line-height: 1.4; }
