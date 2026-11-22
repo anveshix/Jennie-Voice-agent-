@@ -32,8 +32,8 @@
   const SKILLS = [
     {
       id: 'official-letter', name: 'Official letter / application',
-      re: /\b(letter|application|patra|prarthna|avedan|notice|circular|certificate|noc|leave|chhutti|chutti)\b|पत्र|आवेदन|अवकाश|छुट्टी|सूचना|प्रमाण/i,
-      prompt: 'Draft the full letter at once: sender/office block, date, To, Subject, salutation, body, closing, signature line. Formal Hindi (Devanagari) unless asked for English; bilingual if the recipient is CBSE/officials. Use UDISE ' + OWNER.udise + ' in school letterheads. Put unknowns in [brackets], never ask mid-way. File folder: 02_Official_Letters_&_CBSE_Compliance.'
+      re: /\b(letter|application|patra|prarthna|avedan|notice|circular|certificate|noc|leave|chhutti|chutti|notesheet|note sheet|mail|email|roster|routine|timetable|time table)\b|पत्र|आवेदन|अवकाश|छुट्टी|सूचना|प्रमाण/i,
+      prompt: 'Draft the full letter at once: sender/office block, date, To, Subject, salutation, body, closing, signature line. Formal Hindi (Devanagari) unless asked for English; bilingual if the recipient is CBSE/officials. Use UDISE ' + OWNER.udise + ' in school letterheads. Put unknowns in [brackets], never ask mid-way. Formats: Notice = letterhead, Ref No, date, NOTICE, subject, numbered points, issuer. Circular adds reference + compliance line. Note-sheet = File No, Subject, 1 Background, 2 Rules/Reference, 3 Proposal, 4 Financial implication, 5 Submitted for approval, put-up/recommended/approved blocks. E-mail = To/Subject, salutation, short paragraphs, closing. For duty rosters/class routines say the Office tab builds a conflict-free table, or produce a markdown table. File folder: 02_Official_Letters_&_CBSE_Compliance.'
     },
     {
       id: 'lesson-plan', name: 'Lesson plan / NCERT notes',

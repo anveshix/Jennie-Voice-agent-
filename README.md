@@ -376,3 +376,9 @@ Setup → Memory → **Task reminders**. Overdue/today tasks trigger a notificat
 - **App open or in background:** checked every minute.
 - **App closed:** Android Chrome with Jenni installed to the Home screen uses Periodic Background Sync (about 1–2 checks/day; Chrome decides the exact time). iOS Safari and uninstalled tabs do not support this — the daily briefing on opening is the fallback. A static site has no push server, so there are no exact-time alarms.
 - **Privacy:** the service worker cannot read encrypted data, so a small index (due dates) is kept in IndexedDB. With a PIN set it holds **no titles** — notifications say only "1 overdue, 1 aaj due". Without a PIN they include titles. Panic wipe clears it.
+
+## Voice feel + Office desk
+
+- **Streaming:** replies appear word by word, and in voice mode each finished sentence is spoken while the rest is still being written (first words after ~1 s instead of after the whole answer). Memory tags are never read aloud. Providers that do not stream fall back to the old whole-reply path.
+- **Office tab:** notice, circular, official letter, application, e-mail, note-sheet, **duty roster / deployment routine** and **class routine** in one tap. Set the school profile once (letterhead, UDISE, signatory); reference numbers auto-increment per session (`ABC/2026-27/NTC/3`). Output is editable, saves to Drafts, downloads as `.docx` (tables are real Word tables), and can be polished/translated by the model on request.
+- The roster and routine are **solvers, not model text**: no teacher double-booked, no class clash, fair duty split, unavailability honoured, and impossible demands are reported instead of hidden (tested).

@@ -657,7 +657,7 @@ code {
 
 /* bottom navigation: five equal targets, labels always visible */
 .bottomnav {
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(6, 1fr);
   gap: 2px;
   padding: 6px 6px calc(8px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
@@ -1117,3 +1117,7 @@ code {
   padding: 10px 12px;
 }
 .card--tight .card__meta { font-size: 13px; line-height: 1.4; }
+
+.bubble.is-streaming::after { content: '▍'; opacity: .6; animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+#offOut { width: 100%; min-height: 220px; margin: 10px 0; white-space: pre; }

@@ -131,6 +131,12 @@ async function boot(options = {}) {
             setTimeout(() => reject(err), 5);
           });
         }
+        if (step && typeof step === 'object' && step.sse) {
+          const enc = new TextEncoder();
+          const chunks = step.sse.map((c) => enc.encode('data: ' + JSON.stringify({ choices: [{ delta: { content: c } }] }) + '\n\n')).concat([enc.encode('data: [DONE]\n\n')]);
+          let i = 0;
+          return { ok: true, status: 200, headers: { get: () => 'text/event-stream' }, body: { getReader: () => ({ read: async () => (i < chunks.length ? { done: false, value: chunks[i++] } : { done: true }), cancel() {} }) } };
+        }
         if (step === 'empty') return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '' }, finish_reason: 'length' }] }) };
         if (step === 'truncated') return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'Respected Sir, I am' }, finish_reason: 'length' }] }) };
         if (step === '500') return { ok: false, status: 500, json: async () => ({ error: { message: 'boom' } }) };
@@ -173,6 +179,7 @@ async function boot(options = {}) {
   window.eval(fs.readFileSync(path.join(ROOT, 'remind-store.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'connectors.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'agent.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'office.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'));
   await wait(180);
 
@@ -206,7 +213,7 @@ function submit(window, text) {
   /* ── mobile shell ──────────────────────────────────────────────────────── */
   b = await boot();
   const navItems = [...b.window.document.querySelectorAll('.tab')];
-  ok(navItems.length === 5, 'bottom navigation has five items', navItems.map((t) => t.textContent.trim()).join('/'));
+  ok(navItems.length === 6, 'bottom navigation has six items', navItems.map((t) => t.textContent.trim()).join('/'));
   ok(navItems.every((t) => t.querySelector('svg')), 'every nav item has an icon');
   ok(b.$('appbarTitle') !== null && b.$('brandMeta') !== null, 'app bar shows title and provider');
   ok(b.$('btnDriveQuick') !== null, 'app bar has a Drive shortcut');
@@ -1060,6 +1067,55 @@ function submit(window, text) {
   await wait(220);
   const last = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].pop();
   ok(last.textContent.includes('Key galat'), '401 explains itself in plain words');
+  b.dom.window.close();
+
+  /* ── restored behaviour: memory tags, streaming, streamed voice ─────────── */
+  b = await boot({ script: ['Theek hai, yaad rakh liya.\n[[remember: Principal likes short circulars]]'] });
+  submit(b.window, 'hello');
+  await wait(300);
+  const tagged = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].pop().textContent;
+  ok(!tagged.includes('[[') && tagged.includes('yaad rakh liya'), 'memory tags are stripped from the reply', tagged);
+  ok(/short circulars/.test(b.window.localStorage.getItem('jenni_notes_v1') || ''), 'a model-written [[remember]] is saved to notes');
+  b.dom.window.close();
+
+  b = await boot({ script: [{ sse: ['Haan yaar, ', 'kar deti hoon. ', 'Pehle notice ', 'banate hain.'] }] });
+  submit(b.window, 'notice ka plan');
+  await wait(400);
+  const streamedText = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].pop().textContent;
+  ok(streamedText === 'Haan yaar, kar deti hoon. Pehle notice banate hain.', 'a streamed reply is assembled in full', streamedText);
+  ok(JSON.parse(b.calls.find((c) => c.url.includes('chat/completions')).options.body).stream === true, 'the request asks for a stream');
+  b.dom.window.close();
+
+  b = await boot({ script: [{ sse: ['Haan yaar, ', 'main kar deti hoon ye kaam. ', 'Pehle notice ', 'ka draft banate hain.\n', '[[remember: likes drafts]]'] }] });
+  b.$('btnVoice').click();
+  await wait(90);
+  b.rec.last.say('notice banao');
+  await wait(900);
+  ok(b.tts.spoken.length >= 2, 'a streamed answer is spoken sentence by sentence', String(b.tts.spoken.length));
+  ok(b.tts.spoken.every((u) => !u.text.includes('[[') && !u.text.includes('likes drafts')), 'memory tags are never spoken');
+  b.rec.last.say('ruko');
+  await wait(400);
+  b.dom.window.close();
+
+  /* ── Office desk ───────────────────────────────────────────────────────── */
+  b = await boot();
+  b.window.document.querySelector('.tab[data-tab="office"]').click();
+  await wait(150);
+  ok(b.$('sheet-office').hidden === false, 'Office tab opens the Office desk');
+  ok(b.$('offType').options.length === 8, 'eight document types are offered', String(b.$('offType').options.length));
+  b.$('school_name').value = 'Dumka Public School'; b.$('btnSchoolSave').click();
+  b.$('offType').value = 'notice'; b.$('offType').dispatchEvent(new b.window.Event('change'));
+  b.$('off_subject').value = 'Sports Day'; b.$('off_body').value = 'Reach by 8:30\nWear uniform';
+  b.$('btnOffMake').click();
+  ok(b.$('offOut').value.includes('DUMKA PUBLIC SCHOOL') && b.$('offOut').value.includes('1. Reach by 8:30'), 'notice is built with letterhead and numbered points');
+  b.$('btnOffMake').click();
+  ok(/NTC\/2$/.test((b.$('offOut').value.match(/DP\/[^\s]+|DPS\/[^\s]+/) || [''])[0]) || /\/NTC\/2/.test(b.$('offOut').value), 'reference number increments per document');
+  b.$('offType').value = 'roster'; b.$('offType').dispatchEvent(new b.window.Event('change'));
+  b.$('off_staff').value = 'Anil\nBina\nChandan\nDeepa'; b.$('off_duties').value = 'Assembly | 2\nGate | 1';
+  b.$('btnOffMake').click();
+  ok(b.$('offOut').value.includes('| Assembly |') && b.$('offOut').value.includes('| Staff | Duties |'), 'duty roster table is generated');
+  b.$('btnOffSave').click();
+  ok(JSON.parse(b.window.localStorage.getItem('jenni_drafts_v1') || '[]').length === 1, 'office output saves as a draft');
   b.dom.window.close();
 
   /* ── legacy notes stored under agent.js's key are split out once ───────── */

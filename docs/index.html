@@ -202,6 +202,10 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>
       <span>Voice</span>
     </button>
+    <button class="tab" type="button" data-tab="office">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="7" width="16" height="12" rx="2"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M4 12h16"/></svg>
+      <span>Office</span>
+    </button>
     <button class="tab" type="button" data-tab="drafts">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h7L18 8v11a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 5 19V4.9a1.4 1.4 0 0 1 1.5-1.4Z"/><path d="M13 3.5V8h4.5"/></svg>
       <span>Drafts</span>
@@ -220,6 +224,40 @@
 
 <!-- ══════════════════════════════════════════════════════════ SHEETS -->
 <div class="scrim" id="scrim" hidden></div>
+
+<section class="sheet" id="sheet-office" aria-labelledby="officeTitle" hidden>
+  <header class="sheet__head">
+    <h2 id="officeTitle">Office desk</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+  </header>
+  <div class="sheet__body">
+    <p class="hint">Notice, circular, letter, mail, note-sheet, duty roster aur class routine — turant, sahi format me. Voice se bhi bol sakte ho: "notice banao…"</p>
+    <details id="officeSchool">
+      <summary class="label">School profile (letterhead)</summary>
+      <div id="schoolFields"></div>
+      <button class="btn btn--small" type="button" id="btnSchoolSave">Save profile</button>
+    </details>
+    <label class="label" for="offType">Kya banana hai</label>
+    <select class="field" id="offType"></select>
+    <div id="offFields"></div>
+    <div class="row row--wrap">
+      <button class="btn btn--primary" type="button" id="btnOffMake">Banao</button>
+    </div>
+    <p class="room-result" id="offResult" role="status" aria-live="polite"></p>
+    <textarea class="field mono" id="offOut" rows="14" spellcheck="false" placeholder="Draft yahan aayega — seedha edit kar sakte ho"></textarea>
+    <div class="row row--wrap">
+      <button class="btn btn--small" type="button" id="btnOffSave">Save draft</button>
+      <button class="btn btn--small" type="button" id="btnOffDocx">Download .docx</button>
+      <button class="btn btn--small" type="button" id="btnOffCopy">Copy</button>
+    </div>
+    <div class="row row--wrap">
+      <button class="btn btn--small" type="button" data-polish="improve">AI se sudharo</button>
+      <button class="btn btn--small" type="button" data-polish="hindi">Hindi me</button>
+      <button class="btn btn--small" type="button" data-polish="english">English me</button>
+      <button class="btn btn--small" type="button" data-polish="bilingual">Hindi + English</button>
+    </div>
+  </div>
+</section>
 
 <section class="sheet" id="sheet-drafts" aria-labelledby="draftsTitle" hidden>
   <header class="sheet__head">
@@ -508,6 +546,7 @@
 <script src="./remind-store.js"></script>
 <script src="./connectors.js"></script>
 <script src="./agent.js"></script>
+<script src="./office.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

@@ -19,6 +19,7 @@
     packs: 'jenni_packs_v1',   // installed SKILL.md packs
     remind: 'jenni_remind_on', // reminders enabled ('1')
     voiceOn: 'jenni_voice_on', // master voice switch ('0' = off)
+    school: 'jenni_school_v1', // letterhead profile for the Office desk
     notes: 'jenni_notes_v1',   // owner notes + tasks (brain.js)
     dk: 'jenni_dk_v1',         // salt for the data key (not secret)
     lock: 'jenni_lock_v1',     // PIN settings + config
@@ -57,7 +58,7 @@
   /* Long-term memory and learned skills. Both are plain localStorage data, so
      they show up in the UI, survive reloads and vanish on "Erase everything".
      Declared after AGENT, which they depend on. */
-  const SECURE_KEYS = [LS.chat, LS.drafts, LS.notes, LS.memory, LS.skills, LS.episodes, LS.insights];
+  const SECURE_KEYS = [LS.chat, LS.drafts, LS.notes, LS.school, LS.memory, LS.skills, LS.episodes, LS.insights];
   const vault = new Map();          // decrypted JSON strings while unlocked
   const vaultQueue = {};            // per-key write chain (keeps writes in order)
   const secureStore = {
@@ -269,6 +270,8 @@
       max_tokens: options.maxTokens || 500
     };
 
+    if (options.onDelta) body.stream = true;
+
     if (isGemini(cfg)) {
       const effort = THINKING_FLOOR[model] || 'minimal';
       body.reasoning_effort = effort;
@@ -278,6 +281,57 @@
       if (effort === 'minimal') delete body.temperature;   // 3.6 ignores sampling anyway
     }
     return body;
+  }
+
+  /* Server-sent events from an OpenAI-compatible endpoint → text, delivered to
+     options.onDelta(chunk) as it arrives so the bubble and the voice start at once. */
+  async function readStream(response, options, started) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const readWithIdle = () => new Promise((resolve, reject) => {
+      const t = setTimeout(() => {
+        try { reader.cancel(); } catch (e) { /* ignore */ }
+        const err = new Error('Provider ne jawab beech me rok diya.');
+        err.code = 'TIMEOUT';
+        reject(err);
+      }, 25000);
+      reader.read().then((r) => { clearTimeout(t); resolve(r); }, (e) => { clearTimeout(t); reject(e); });
+    });
+    let buf = '', text = '', finish = '';
+    for (;;) {
+      const { done, value } = await readWithIdle();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === '[DONE]') continue;
+        let json;
+        try { json = JSON.parse(data); } catch (e) { continue; }
+        const choice = json.choices && json.choices[0];
+        if (!choice) continue;
+        if (choice.finish_reason) finish = choice.finish_reason;
+        const delta = choice.delta && choice.delta.content;
+        if (delta) { text += delta; options.onDelta(delta); }
+      }
+    }
+    const out = text.trim();
+    if (!out) {
+      const error = new Error(finish === 'length' ? 'Jawab budget khatam ho gaya. Dobara try karo.' : 'Provider ne khali jawab bheja.');
+      error.code = 'EMPTY_REPLY';
+      throw error;
+    }
+    if (finish === 'length') {
+      const error = new Error('Jawab beech me kat gaya.');
+      error.code = 'TRUNCATED';
+      error.partial = out;
+      throw error;
+    }
+    app.lastLatency = Date.now() - started;
+    return out;
   }
 
   async function callProvider(messages, options = {}) {
@@ -299,6 +353,12 @@
         body: JSON.stringify(buildRequestBody(cfg, model, messages, options)),
         signal: controller.signal
       });
+
+      if (options.onDelta && response.ok && response.body && response.body.getReader
+          && /text\/event-stream/i.test(response.headers.get('content-type') || '')) {
+        clearTimeout(timer);                      // streaming has its own idle timeout
+        return await readStream(response, options, started);
+      }
 
       const payload = await response.json().catch(() => null);
 
@@ -416,6 +476,7 @@
         const canRetry = RETRYABLE.has(error.code) && attempt < 2 && !options.noRetry;
         if (!canRetry) throw error;
         attempt += 1;
+        if (options.onReset) options.onReset();     // drop a half-streamed answer before retrying
         setStatus('busy');
         await sleep(700 * attempt);
       }
@@ -667,9 +728,12 @@
 
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
-    if (message.pending) {
+    if (message.pending && !message.text) {
       bubble.classList.add('is-thinking');
       bubble.innerHTML = '<i></i><i></i><i></i>';
+    } else if (message.pending) {
+      bubble.classList.add('is-streaming');
+      bubble.innerHTML = renderMd(message.text);
     } else if (message.role === 'me') {
       bubble.textContent = message.text;
     } else {
@@ -868,7 +932,19 @@
     setStatus('busy');
 
     let reply = '';
+    let untrusted = false;                 // external text in this turn → it may not write memory
+    const speaker = (voice.mode || options.speakAlways) && voiceEnabled() && window.speechSynthesis ? createSpeaker() : null;
+    let streamed = '', lastPaint = 0;
+    const onDelta = (chunk) => {
+      streamed += chunk;
+      pending.text = streamed.replace(/\[\[[\s\S]*$/, '').trim();       // hide a memory tag while it is being written
+      const t = Date.now();
+      if (t - lastPaint > 80) { lastPaint = t; paintChat(); }
+      if (speaker) speaker.push(chunk);
+    };
+    const onReset = () => { streamed = ''; pending.text = ''; if (speaker) speaker.reset(); };
     try {
+      if (navigator.onLine === false) throw Object.assign(new Error('Internet nahi hai — connect hote hi dobara bhejna.'), { code: 'OFFLINE' });
       // Voice: keep the reply short so speech starts fast. Typed: allow more.
       const repoContext = await repoContextFor(clean);
 
@@ -879,13 +955,26 @@
         if (learned.length) memory.compact();
       }
 
-      reply = await askProvider(
-        conversationForApi(clean + repoContext),
-        { maxTokens: voice.mode ? 260 : 600 }
-      );
+      let delegated = null;
+      const nm = nmClient();
+      if (nm && CN && CN.wantsDelegation(clean)) {
+        try {
+          delegated = await nm.delegate(CN.stripPrefix(clean));
+        } catch (error) { toast('NeverMind: ' + error.message, true); }   // fall back to plain chat
+      }
+      if (delegated || repoContext) untrusted = true;
+      if (delegated) {
+        reply = ['NeverMind agents (' + delegated.status + '):', delegated.summary]
+          .concat(delegated.files.map((f) => `[${f.name}](${f.url})`)).join('\n\n');
+      } else {
+        reply = await askProvider(
+          conversationForApi(clean + repoContext),
+          { maxTokens: voice.mode ? 260 : 600, onDelta, onReset }
+        );
+      }
 
       // One self-check pass: a plan-shaped question deserves more than "haan".
-      if (AGENT.critiqueAnswer && !voice.mode) {
+      if (AGENT.critiqueAnswer && !voice.mode && !(speaker && speaker.spoken())) {
         const verdict = AGENT.critiqueAnswer(reply, clean);
         if (!verdict.ok) {
           setStatus('busy');
@@ -897,6 +986,11 @@
           );
           if (better && better.length > reply.length * 0.6) reply = better;
         }
+      }
+      if (BRAIN) {
+        const parsed = BRAIN.extractOps(reply);
+        reply = parsed.text;
+        if (parsed.ops.length && !untrusted) { saveNotes(BRAIN.applyOps(loadNotes(), parsed.ops)); toast('Memory update ho gayi', false); }
       }
       /* A useful step-by-step answer becomes a reusable playbook, so the next
          similar question starts from experience instead of zero (Hermes-style). */
@@ -910,6 +1004,7 @@
     } catch (error) {
       pending.pending = false;
       pending.failed = true;                 // drives the Retry button
+      if (speaker) speaker.reset();
       pending.text = 'Jawab nahi aaya. ' + plainError(error);
       pending.retryText = clean;             // the question to send again
       reply = '';
@@ -940,7 +1035,8 @@
     }
 
     // Voice mode always reads the answer; typed chat only when the user asked.
-    if (options.speakAlways || voice.mode) await speak(reply);
+    if (speaker && speaker.spoken() && reply) await speaker.finish();     // already speaking as it streamed
+    else if (options.speakAlways || voice.mode) await speak(reply);
     else maybeSpeakLast();
 
     if (voice.mode && !voice.stopping) scheduleListen(400);
@@ -1012,6 +1108,64 @@
     text = text.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '');
     text = text.replace(/\s+/g, ' ').trim();
     return text.slice(0, 900);
+  }
+
+  function makeUtterance(clean) {
+    const utterance = new SpeechSynthesisUtterance(clean);
+    utterance.lang = voice.lang;
+    const chosen = voice.ttsVoice || pickVoice(voice.lang);
+    if (chosen) utterance.voice = chosen;
+    utterance.rate = 1.06;
+    utterance.pitch = 1.08;
+    utterance.volume = 1;
+    return utterance;
+  }
+
+  /* Speaks a reply while it is still being written: complete sentences are
+     queued on the speech engine as they arrive, so the first words are heard
+     after one sentence, not after the whole answer. Memory tags are never read. */
+  function createSpeaker() {
+    let buf = '', cut = false, pendingCount = 0, spokenCount = 0, closed = false, waiter = null;
+    const settle = () => { if (closed && pendingCount === 0 && waiter) { const w = waiter; waiter = null; w(); } };
+    function say(raw) {
+      const clean = speakableText(raw);
+      if (!clean || !voiceEnabled() || !window.speechSynthesis) return;
+      try {
+        const u = makeUtterance(clean);
+        pendingCount += 1; spokenCount += 1;
+        voice.speaking = true; paintVoiceUi();
+        const end = () => { pendingCount -= 1; if (pendingCount <= 0) { voice.speaking = false; paintVoiceUi(); } settle(); };
+        u.onend = end; u.onerror = end;
+        window.speechSynthesis.speak(u);
+      } catch (e) { /* speech unavailable */ }
+    }
+    function drain(final) {
+      for (;;) {
+        const m = buf.match(/^[\s\S]*?[.!?।\n](?=\s|$)/);
+        let take = m && (m[0].trim().length >= 24 || final || /[\n।]$/.test(m[0])) ? m[0] : '';
+        if (!take && buf.length > 160) { const i = buf.lastIndexOf(',', 150); take = buf.slice(0, i > 40 ? i + 1 : 150); }
+        if (!take) break;
+        buf = buf.slice(take.length);
+        say(take);
+      }
+      if (final && buf.trim()) { say(buf); buf = ''; }
+    }
+    return {
+      push(chunk) {
+        if (cut || closed) return;
+        buf += chunk;
+        const i = buf.indexOf('[[');
+        if (i >= 0) { buf = buf.slice(0, i); cut = true; }
+        drain(cut);
+      },
+      reset() { buf = ''; cut = false; try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ } pendingCount = 0; spokenCount = 0; },
+      spoken: () => spokenCount > 0,
+      finish() {
+        closed = true; drain(true);
+        if (pendingCount === 0) return Promise.resolve();
+        return new Promise((resolve) => { waiter = resolve; setTimeout(resolve, 60000); });
+      }
+    };
   }
 
   function speak(text) {
@@ -1388,6 +1542,109 @@
     persist('drafts');
     paintDrafts();
     toast('Draft save ho gaya');
+  }
+
+  /* ── Office desk ───────────────────────────────────────────────────────── */
+  const OFFICE = window.JENNI_OFFICE;
+  const SCHOOL_FIELDS = [['name', 'School ka naam'], ['address', 'Pata'], ['affiliation', 'CBSE affiliation no.'], ['udise', 'UDISE'], ['principal', 'Principal / signatory'], ['designation', 'Pad'], ['place', 'Jagah']];
+  const officeState = { type: null, built: null };
+  const loadSchool = () => { try { return Object.assign({}, OFFICE.SCHOOL_DEFAULT, JSON.parse(secureStore.getItem(LS.school) || '{}')); } catch (e) { return Object.assign({}, OFFICE.SCHOOL_DEFAULT); } };
+  const saveSchool = (v) => secureStore.setItem(LS.school, JSON.stringify(v));
+
+  function renderOfficeFields() {
+    const type = OFFICE.TYPES.find((t) => t.id === $('offType').value) || OFFICE.TYPES[0];
+    officeState.type = type;
+    const host = $('offFields'); host.textContent = '';
+    type.fields.forEach((f) => {
+      const label = document.createElement('label'); label.className = 'label'; label.htmlFor = 'off_' + f.id; label.textContent = f.label + (f.req ? ' *' : '');
+      let input;
+      if (f.kind === 'area') { input = document.createElement('textarea'); input.rows = f.rows || 4; }
+      else if (f.kind === 'select') {
+        input = document.createElement('select');
+        f.options.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; input.appendChild(o); });
+      } else { input = document.createElement('input'); input.type = 'text'; }
+      input.className = 'field'; input.id = 'off_' + f.id;
+      if (f.value) input.value = f.value;
+      host.append(label, input);
+    });
+  }
+
+  function paintOffice() {
+    if (!OFFICE) return;
+    const sel = $('offType');
+    if (!sel.options.length) {
+      OFFICE.TYPES.forEach((t) => { const o = document.createElement('option'); o.value = t.id; o.textContent = t.label; sel.appendChild(o); });
+      renderOfficeFields();
+    }
+    const school = loadSchool(), host = $('schoolFields');
+    host.textContent = '';
+    SCHOOL_FIELDS.forEach(([k, label]) => {
+      const l = document.createElement('label'); l.className = 'label'; l.textContent = label;
+      const i = document.createElement('input'); i.className = 'field'; i.id = 'school_' + k; i.value = school[k] || '';
+      host.append(l, i);
+    });
+  }
+
+  function officeMake(typeId, values) {
+    const school = loadSchool();
+    const built = OFFICE.build(typeId, values, school, Date.now());
+    saveSchool(Object.assign(school, { counter: built.counter }));
+    officeState.built = built;
+    $('offOut').value = built.text;
+    return built;
+  }
+
+  function wireOffice() {
+    if (!OFFICE || !$('offType')) return;
+    $('offType').addEventListener('change', renderOfficeFields);
+    $('btnSchoolSave').addEventListener('click', () => {
+      const v = loadSchool();
+      SCHOOL_FIELDS.forEach(([k]) => { v[k] = $('school_' + k).value.trim(); });
+      saveSchool(v); toast('School profile save ho gayi');
+    });
+    $('btnOffMake').addEventListener('click', () => {
+      const type = officeState.type || OFFICE.TYPES[0];
+      const values = {};
+      for (const f of type.fields) {
+        values[f.id] = $('off_' + f.id).value;
+        if (f.req && !String(values[f.id]).trim()) { setResult('offResult', `"${f.label}" bharna zaroori hai.`, 'error'); return; }
+      }
+      const school = loadSchool();
+      if (!school.name) setResult('offResult', 'Tip: School profile bhar do to letterhead poora aayega.', 'busy');
+      else setResult('offResult', '', '');
+      try {
+        const built = officeMake(type.id, values);
+        const meta = built.meta;
+        const issues = meta ? meta.warnings.concat(meta.errors || []) : [];
+        if (issues.length) setResult('offResult', issues.slice(0, 3).join(' · '), 'error');
+        else if (school.name) setResult('offResult', 'Taiyar. Edit karo, phir Save/Download.', 'ok');
+      } catch (error) { setResult('offResult', error.message, 'error'); }
+    });
+    $('btnOffSave').addEventListener('click', () => { if ($('offOut').value.trim()) saveDraft($('offOut').value); });
+    $('btnOffCopy').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText($('offOut').value); toast('Copy ho gaya'); } catch (e) { toast('Copy nahi hua', true); }
+    });
+    $('btnOffDocx').addEventListener('click', () => {
+      const text = $('offOut').value.trim();
+      if (!text) return;
+      const title = (officeState.built && officeState.built.title) || 'Office document';
+      const built = DOCS.buildFile(title, text, 'docx');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(built.blob); a.download = built.name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    });
+    document.querySelectorAll('[data-polish]').forEach((btn) => btn.addEventListener('click', async () => {
+      const text = $('offOut').value.trim();
+      if (!text) return;
+      if (!state.cfg || !state.cfg.apiKey) { openSheet('setup'); return; }
+      setResult('offResult', 'Jenni sudhar rahi hai…', 'busy');
+      try {
+        const out = await askProvider([{ role: 'user', content: OFFICE.polishPrompt(text, btn.dataset.polish) }], { maxTokens: 1800, temperature: 0.3 });
+        $('offOut').value = out;
+        setResult('offResult', 'Ho gaya — padh ke check kar lo.', 'ok');
+      } catch (error) { setResult('offResult', plainError(error), 'error'); }
+    }));
   }
 
   function paintNotes() {
@@ -1906,7 +2163,7 @@
 
   /* ══════════════════════════════════════════════════════════════ SHEETS */
 
-  const ROUTES = ['chat', 'voice', 'drafts', 'drive', 'setup'];
+  const ROUTES = ['chat', 'voice', 'office', 'drafts', 'drive', 'setup'];
 
   function openSheet(name, options = {}) {
     closeSheets({ keepMemory: true });
@@ -1918,6 +2175,7 @@
     if (name === 'drafts') paintDrafts();
     if (name === 'drive') { paintDrive(); listDriveFiles(); }
     if (name === 'setup') fillSetupForm();
+    if (name === 'office') paintOffice();
     rememberScreen(name);
     if (!options.silent) setHash(name);
     paintTabs();
@@ -2947,6 +3205,7 @@
       setInterval(remindTick, 60000);
       document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') remindTick(); });
     }
+    wireOffice();
     if ($('btnMemAdd') && BRAIN) {
       $('btnMemAdd').addEventListener('click', () => {
         const box = $('memInput');
