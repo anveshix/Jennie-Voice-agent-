@@ -428,7 +428,7 @@
           if (state.wakeLoopActive && state.unlocked && !state.speaking && !state.isListening && !state.isResponding) {
             startListeningSafely();
           }
-        }, 450);
+        }, 250);
       }
     };
   }
@@ -445,6 +445,20 @@
     const words = text.match(/\b(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine)\b/g) || [];
     const spokenDigits = words.map((word) => digitWords[word]).join('');
     return /^\d{4}$/.test(spokenDigits) ? spokenDigits : '';
+  }
+
+  /* Instant, respectful acknowledgements — no model round-trip for "hello" or
+     "haan". Anything with content still goes to the model. */
+  const QUICK = [
+    [/^(hi|hello|hey|namaste|namaskar)\b/, 'Haan sir, ready hoon. Aap kaam boliye, main kar dungi.'],
+    [/^(haan|han|yes|ok|okay|theek hai|thik hai|achha|bilkul)\b/, 'Ji sir, bataiye.'],
+    [/^(thanks|thank you|shukriya|dhanyavaad)\b/, 'Koi baat nahi sir. Aur kuch kaam ho to boliye.']
+  ];
+  function quickReply(text) {
+    const t = String(text || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+    if (!t || t.split(' ').length > 4) return '';
+    const hit = QUICK.find(([re]) => re.test(t));
+    return hit ? hit[1] : '';
   }
 
   function startListeningSafely() {
@@ -1601,6 +1615,14 @@
     if (!query) return;
 
     appendMessage('user', query);
+    const quick = quickReply(query);
+    if (quick) {
+      appendMessage('jenni', quick);
+      speakHumble(quick);
+      const input = $('botCommandInput');
+      if (input) { input.value = ''; autoGrow(input); }
+      return;
+    }
     const input = $('botCommandInput');
     if (input) {
       input.value = '';

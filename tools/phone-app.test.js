@@ -48,11 +48,14 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const liveSocket = { sent: [], socket: null, urls: [] };
+
 async function boot(options = {}) {
   const retired = options.retired || null;
   const script = options.script ? options.script.slice() : null;
   const spareDown = options.spareDown || null;
   const spareOk = options.spareOk || null;
+  liveSocket.sent = []; liveSocket.socket = null; liveSocket.urls = [];
   const dom = new JSDOM(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'), {
     url: 'https://anveshix.github.io/Jennie-Voice-agent-/',
     runScripts: 'outside-only',
@@ -60,7 +63,13 @@ async function boot(options = {}) {
   });
   const { window } = dom;
 
+  const toasts = [];
   window.HTMLElement.prototype.scrollTo = function () {};
+  const toastHost = window.document.getElementById('toastHost');
+  if (toastHost) {
+    new window.MutationObserver(() => { const t = toastHost.textContent.trim(); if (t) toasts.push(t); })
+      .observe(toastHost, { childList: true, subtree: true, characterData: true });
+  }
   window.HTMLElement.prototype.scrollIntoView = function () {};
   window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   window.scrollTo = () => {};
@@ -96,6 +105,38 @@ async function boot(options = {}) {
     }
   }
   window.SpeechRecognition = FakeRecognition;
+
+  /* fake Gemini Live socket: records what the app sends, lets a test push packets */
+  class FakeSocket {
+    constructor(url) {
+      this.url = url; this.readyState = 0; liveSocket.urls.push(url); liveSocket.socket = this;
+      setTimeout(() => { this.readyState = 1; this.onopen && this.onopen(); }, 5);
+    }
+    send(payload) { liveSocket.sent.push(payload); }
+    close(code, reason) { this.readyState = 3; this.onclose && this.onclose({ code: code || 1000, reason: reason || 'user' }); }
+    drop(reason) { this.readyState = 3; this.onclose && this.onclose({ code: 1006, reason: reason || 'network-error' }); }
+    push(obj) { this.onmessage && this.onmessage({ data: JSON.stringify(obj) }); }
+  }
+  window.WebSocket = FakeSocket;
+  liveSocket.push = (obj) => liveSocket.socket && liveSocket.socket.push(obj);
+  liveSocket.ready = () => liveSocket.socket && liveSocket.socket.push({ setupComplete: {} });
+  liveSocket.audio = (base64, rate) => liveSocket.push({ serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=' + (rate || 24000), data: base64 || 'AAAA' } }] } } });
+  liveSocket.say = (text) => liveSocket.push({ serverContent: { outputTranscription: { text }, turnComplete: true } });
+  liveSocket.interrupt = () => liveSocket.push({ serverContent: { interrupted: true } });
+
+  /* fake AudioContext: jsdom ships none, and Live voice / recorders need one */
+  const audioLog = { created: 0, played: 0, stopped: 0 };
+  class FakeAudioContext {
+    constructor() { this.sampleRate = 48000; this.state = 'running'; this.destination = {}; this.currentTime = 0; audioLog.created += 1; }
+    resume() { this.state = 'running'; return Promise.resolve(); }
+    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+    createScriptProcessor() { return { connect() {}, disconnect() {}, onaudioprocess: null }; }
+    createAnalyser() { return { fftSize: 1024, connect() {}, getByteTimeDomainData(buf) { buf.fill(128); } }; }
+    createBuffer(channels, length, rate) { return { duration: length / rate, length, rate, getChannelData: () => new Float32Array(length) }; }
+    createBufferSource() { return { buffer: null, connect() {}, start() { audioLog.played += 1; }, stop() { audioLog.stopped += 1; } }; }
+    async decodeAudioData() { return { numberOfChannels: 1, sampleRate: 16000, getChannelData: () => new Float32Array(16000).fill(0.1) }; }
+  }
+  window.AudioContext = FakeAudioContext;
 
   /* fake speech synthesis */
   const tts = { spoken: [], cancelled: 0 };
@@ -214,6 +255,9 @@ async function boot(options = {}) {
   window.TextDecoder = TextDecoder;
 
   window.eval(fs.readFileSync(path.join(ROOT, 'net.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'fast.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'persona.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'live.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'security.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'docs.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'github.js'), 'utf8'));
@@ -234,7 +278,7 @@ async function boot(options = {}) {
   window.eval(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'));
   await wait(180);
 
-  return { dom, window, rec, tts, calls, $: (id) => window.document.getElementById(id) };
+  return { dom, window, rec, tts, calls, live: liveSocket, audio: audioLog, toasts, $: (id) => window.document.getElementById(id) };
 }
 
 function submit(window, text) {
@@ -333,10 +377,11 @@ function submit(window, text) {
   ok(b.rec.starts === 1, 'voice mode opens the mic');
   ok(b.$('app').classList.contains('is-voice'), 'app enters voice mode');
   ok(b.window.document.querySelector('.tab[data-tab="voice"]').classList.contains('is-on'), 'Voice tab highlighted during voice mode');
+  ok(b.tts.spoken.length === 1 && /haan sir/i.test(b.tts.spoken[0].text), 'voice mode greets instantly in "haan sir" style');
   b.rec.last.say('Namaste Jenni');
   await wait(1400);
-  ok(b.tts.spoken.length === 1, 'answer spoken aloud');
-  ok(b.tts.spoken[0].text.indexOf('*') === -1, 'markdown stripped before speaking');
+  ok(b.tts.spoken.length >= 2, 'answer spoken aloud');
+  ok(b.tts.spoken.every((line) => line.text.indexOf('*') === -1), 'markdown stripped before speaking');
   ok(b.rec.starts >= 2, 'mic reopened automatically');
   b.rec.last.say('ruko');
   await wait(700);
@@ -790,7 +835,9 @@ function submit(window, text) {
   ok(/21/.test(persona), 'the prompt gives her age (21)', persona.slice(0, 60));
   ok(/hasmukh|humour|mazak/i.test(persona), 'the prompt asks for a sense of humour');
   ok(/common sense|pata nahi/i.test(persona), 'the prompt asks for common sense and honest unknowns');
-  ok(/tum|yaar/i.test(persona), 'the prompt sets a casual tone, not "sir ji"');
+  ok(/\bsir\b/i.test(persona), 'the prompt addresses the owner as "sir"');
+  ok(/humble|izzat|polite/i.test(persona), 'the prompt asks for humble, polite respect');
+  ok(/short|chhote|1 chhota|2-3 chhote/i.test(persona), 'the prompt asks for very short replies');
   ok(/emoji/i.test(persona) && /bullet/i.test(persona), 'the prompt bans emoji and bullets for voice replies');
   ok(!/helpful conversational ai assistant|helpful assistant\./i.test(persona), 'the old generic assistant line is gone');
   ok(/haan|chal|done/i.test(persona), 'quick acknowledgements like "haan / chal / done" are requested');
@@ -816,10 +863,11 @@ function submit(window, text) {
   b = await boot({});
   b.$('btnVoice').click();
   await wait(120);
-  b.rec.last.say('kya haal hai');
+  b.rec.last.say('SA1 marks ka analysis karo');
   await wait(800);
   const voiceBody = JSON.parse(b.calls.filter((c) => c.url.includes('chat/completions')).pop().options.body);
-  ok(Number(voiceBody.max_tokens) <= 300, 'voice replies are capped for speed', String(voiceBody.max_tokens));
+  ok(Number(voiceBody.max_tokens) <= 200, 'voice replies are capped tight for speed', String(voiceBody.max_tokens));
+  ok(Number(voiceBody.temperature) <= 0.6, 'voice sampling is less chatty so replies stay short', String(voiceBody.temperature));
   b.$('btnVoice').click();
   await wait(150);
   b.dom.window.close();
@@ -1413,10 +1461,10 @@ function submit(window, text) {
   b = await boot({ script: ['503', '503', '503', '503'] });
   b.$('btnVoice').click();
   await wait(120);
-  b.rec.last.say('namaste jenni');
+  b.rec.last.say('SA1 mark sheet ka analysis karo');
   await wait(6000);
   ok(b.$('app').classList.contains('is-voice'), 'voice mode stays on after a failed turn', String(b.tts.spoken.length));
-  ok(b.tts.spoken.some((line) => /busy|dikkat|galti nahi|baad/i.test(line.text)), 'the failure is spoken to the user, not just printed', JSON.stringify(b.tts.spoken.map((t) => t.text)).slice(0, 120));
+  ok(b.tts.spoken.length >= 2 && /busy|dikkat|galti nahi|baad/i.test(b.tts.spoken[b.tts.spoken.length - 1].text), 'the failure is spoken to the user, not just printed', JSON.stringify(b.tts.spoken.map((t) => t.text)).slice(0, 160));
   ok(b.rec.starts >= 2, 'the mic reopens after the failure, so the user can speak again');
   b.dom.window.close();
 
@@ -1443,6 +1491,88 @@ function submit(window, text) {
   await wait(400);
   const afterChup = [...b.window.document.querySelectorAll('.msg--jenni .bubble')].map((n) => n.textContent).join(' | ');
   ok(!/Jawab nahi aaya/.test(afterChup), 'a deliberate Chup is not reported as a provider failure', afterChup.slice(0, 80));
+  b.dom.window.close();
+
+  /* ══════════════════════════════════════════════════════════════════════
+     LIVE VOICE (Gemini 2.5 Flash native audio): one socket, both directions,
+     and the user talking cuts her off. */
+
+  /* 1. Live off (default) → the turn-based loop, no socket */
+  b = await boot({ script: ['Haan sir, kar deti hoon.'] });
+  b.$('btnVoice').click();
+  await wait(200);
+  ok(b.live.urls.length === 0, 'Live is opt-in — no socket when it is off');
+  b.dom.window.close();
+
+  /* 2. Live on with a Gemini key → setup packet, native audio, barge-in config */
+  const LIVE_CFG = Object.assign({}, CFG, { liveKey: 'AIzaFakeLiveKey1234567890' });
+  b = await boot({ cfg: LIVE_CFG, seed: { jenni_live_on: '1' } });
+  b.$('btnVoice').click();
+  await wait(300);
+  if (b.live.urls.length !== 1) {
+    console.log('DEBUG', JSON.stringify({
+      on: b.window.localStorage.getItem('jenni_live_on'),
+      cfg: JSON.parse(b.window.localStorage.getItem('jenni_cfg_v1') || 'null'),
+      state: b.window.document.getElementById('voiceState').textContent,
+      toast: b.window.document.getElementById('toastHost').textContent
+    }).slice(0, 400));
+  }
+  ok(b.live.urls.length === 1, 'Live voice opens exactly one socket', String(b.live.urls.length));
+  ok(/generativelanguage\.googleapis\.com/.test(b.live.urls[0]), 'the socket goes to Gemini');
+  ok(/key=/.test(b.live.urls[0]) && !/gsk_/.test(b.live.urls[0]), 'the Gemini key is used, not the Groq key');
+  const setup = JSON.parse(b.live.sent[0] || '{}').setup || {};
+  ok(/native-audio/.test(String(setup.model)), 'the native-audio model is requested', String(setup.model));
+  ok(setup.generationConfig && setup.generationConfig.responseModalities[0] === 'AUDIO', 'audio responses are requested');
+  ok(setup.realtimeInputConfig && setup.realtimeInputConfig.activityHandling === 'START_OF_ACTIVITY_INTERRUPTS', 'a spoken word interrupts her, server side');
+  ok(/\bsir\b/i.test(setup.systemInstruction.parts[0].text), 'the live session carries the same "sir" personality');
+  ok(/short|ek-do chhote|1 sentence/i.test(setup.systemInstruction.parts[0].text), 'the live session asks for short spoken lines');
+  b.dom.window.close();
+
+  /* 3. audio packets play, and an interruption silences her immediately */
+  b = await boot({ cfg: LIVE_CFG, seed: { jenni_live_on: '1' } });
+  b.$('btnVoice').click();
+  await wait(250);
+  b.live.ready();
+  await wait(120);
+  b.live.audio('AAAA');
+  await wait(80);
+  ok(/Live/.test(b.$('voiceState').textContent) || b.$('app').classList.contains('is-speaking'), 'live audio makes her the speaking side');
+  b.live.interrupt();
+  await wait(80);
+  ok(!b.$('app').classList.contains('is-speaking'), 'the user talking stops her mid-sentence');
+
+  /* 4. a socket drop falls back to the normal turn-based loop, mic still works */
+  for (let i = 0; i < 4 && b.window.localStorage.getItem('jenni_live_on') === '1'; i += 1) {
+    if (b.live.socket) b.live.socket.drop('network-error');
+    await wait(900);
+  }
+  await wait(400);
+  ok(b.window.localStorage.getItem('jenni_live_on') === '0', 'a dead Live session switches the setting off', String(b.window.localStorage.getItem('jenni_live_on')));
+  ok(b.toasts.some((t) => /normal voice mode/i.test(t)), 'the fallback is explained in plain words', b.toasts.join(' | ').slice(0, 110));
+  ok(b.rec.starts >= 1, 'the turn-based mic takes over after the drop', String(b.rec.starts));
+  b.dom.window.close();
+
+  /* 5. no Gemini key → Live is not attempted at all */
+  b = await boot({ cfg: { apiKey: 'gsk_' + 'a'.repeat(30), baseUrl: 'https://api.groq.com/openai/v1', model: 'openai/gpt-oss-120b', transcribe: '', provider: 'groq' }, seed: { jenni_live_on: '1' } });
+  b.$('btnVoice').click();
+  await wait(250);
+  ok(b.live.urls.length === 0, 'without a Gemini key Live stays off instead of failing');
+  ok(b.tts.spoken.length >= 1 && /haan sir/i.test(b.tts.spoken[0].text), 'the turn-based loop still greets instantly');
+  b.dom.window.close();
+
+  /* 6. greetings and "haan sir" are answered locally — zero model calls */
+  b = await boot({});
+  b.$('btnVoice').click();
+  await wait(120);
+  const callsBefore = b.calls.filter((c) => c.url.includes('chat/completions')).length;
+  b.rec.last.say('hello');
+  await wait(300);
+  const callsAfter = b.calls.filter((c) => c.url.includes('chat/completions')).length;
+  const lastSpoken = b.tts.spoken[b.tts.spoken.length - 1];
+  ok(callsAfter === callsBefore, 'a greeting is answered with no network round-trip', callsBefore + '→' + callsAfter);
+  ok(/haan sir/i.test(lastSpoken.text), 'the instant greeting is in "haan sir" style', lastSpoken.text);
+  b.rec.last.say('ruko');
+  await wait(400);
   b.dom.window.close();
 
   console.log('\n' + checks + ' checks, ' + (checks - failures) + ' passed' + (failures ? ', ' + failures + ' FAILED' : ''));

@@ -410,6 +410,18 @@
     <button class="btn" type="button" id="btnPackFind">Find skills</button>
     <p class="room-result" id="nmResult" role="status" aria-live="polite"></p>
 
+    <h3 class="sheet__sub">Live voice — phone call jaisa (fastest)</h3>
+    <p class="field-hint">Gemini 2.5 Flash native audio: ek hi live connection par aap bolte ho, Jenni sunti hai aur bolti hai — aap bolna shuru karo to wo turant ruk jaati hai. Free tier par chalta hai. Key PIN vault me encrypted rehti hai.</p>
+    <label class="row"><input type="checkbox" id="liveToggle"> <span>Live voice ON (default: turn-by-turn)</span></label>
+    <input class="field" id="liveKey" type="password" spellcheck="false" autocomplete="off" placeholder="Gemini API key (khali = provider ki Gemini key)">
+    <input class="field mono" id="liveModel" spellcheck="false" autocapitalize="off" placeholder="gemini-2.5-flash-native-audio-preview-12-2025">
+    <input class="field mono" id="liveVoice" spellcheck="false" autocapitalize="off" placeholder="Voice: Zephyr / Puck / Kore / Charon">
+    <div class="row row--wrap">
+      <button class="btn btn--primary btn--small" type="button" id="btnLiveSave">Save live voice</button>
+      <button class="btn btn--small" type="button" id="btnLiveTest">Live test</button>
+    </div>
+    <p class="room-result" id="liveResult" role="status" aria-live="polite"></p>
+
     <h3 class="sheet__sub">Awaaz engine (bolna / sunna)</h3>
     <p class="field-hint">Default: phone ki free awaaz. Chaho to ElevenLabs ya apna open-source voice server (OpenAI-compatible). Jo Jenni bolegi wo us service ko bheja jata hai; key PIN se encrypt rehti hai.</p>
     <label class="label" for="vTtsEngine">Bolna (TTS)</label>
@@ -612,6 +624,9 @@
 <div class="toast-host" id="toastHost" aria-live="polite"></div>
 
 <script src="./net.js"></script>
+<script src="./fast.js"></script>
+<script src="./persona.js"></script>
+<script src="./live.js"></script>
 <script src="./security.js"></script>
 <script src="./docs.js"></script>
 <script src="./github.js"></script>

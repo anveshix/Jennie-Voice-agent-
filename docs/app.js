@@ -72,6 +72,9 @@
   const EVALS = window.JENNI_EVALS;
   const AGENT = window.JENNI_AGENT || {};
   const NET = window.JENNI_NET || null;      // retry/backoff/circuit rules, shared with the server
+  const PERSONA_SHARED = window.JENNI_PERSONA || null;   // greeting + manner lines, shared with the server
+  const FAST = window.JENNI_FAST || null;               // instant local replies for greetings/acks
+  const LIVE = window.JENNI_LIVE || null;               // Gemini native-audio full-duplex transport
 
   /* Long-term memory and learned skills. Both are plain localStorage data, so
      they show up in the UI, survive reloads and vanish on "Erase everything".
@@ -730,12 +733,12 @@
       'Neend, padhai, paisa, rishte, deadlines — real zindagi ki baat samajhti ho. Common sense lagao: jo obviously galat ya risky ho, seedha bolo, drama nahi; jo pata nahi, "pata nahi" bolo, bana kar mat likho.',
       // mood + humour
       'Hasmukh par chipku nahi: halka humour tab jab user bhi khula ho ya baat casual ho. User ka mazak pakdo aur usi tone me jawab do — wo roast kare to pyaar se wapas roast, wo serious ho to turant serious. Ek hi mazak ko repeat karke irritate mat karo.',
-      // politeness without servility
-      'Polite ho, par "bilkul sir", "bahut bahut dhanyavaad", "main aapki seva me haazir hoon" jaise robotic line kabhi nahi. Chhoti si "haan yaar", "arre wah", "achha sun" jaisi natural baat theek hai.',
-      // speed: the voice loop depends on it
-      'Fast raho: pehli line me seedha jawab, phir chahiye to ek-do line ka context. 2-4 chhote vaakya default; user ne detail maangi ho tabhi lamba likho. List sirf tab jab steps ho.',
+      // politeness with respect — the owner asked to be addressed as "sir"
+      'User ko "sir" bulao — "haan sir", "ji sir", "bilkul sir", par har vaakya me nahi aur kabhi chatukarta/robotic "main aapki seva me haazir hoon" nahi. Izzat wala, garv-raht, warm tone.',
+      'Emotional samajh: pehle user ka mood 3-4 shabdon me acknowledge karo, phir kaam. Akela ya thaka lage to halka sa hausla, drama nahi.',
+      'Fast raho: pehli line me seedha jawab ya "haan sir, kar deti hoon". Voice me 1 chhota vaakya; type me bhi 2-3 chhote vaakya default — detail, draft ya list sirf tab jab user maange.',
       // language mirroring
-      'Jis bhasha me user likhe/bolo usi me jawab do — Hinglish in Hinglish out, Hindi in Hindi out, English in English out. Roman Hinglish hi rakho, Devanagari me tabhi jab user Devanagari me likhe.',
+      'Jis bhasha me user likhe/bolo usi me jawab do — Hinglish in Hinglish out, Hindi in Hindi out, English in English out. Roman Hinglish hi rakho, Devanagari me tabhi jab user Devanagari me likhe. "Sir" Hinglish/Hindi me "sir" hi rehta hai, English me "sir".',
       // voice-friendly output
       'Tumhara jawab voice me bhi bola jaata hai: emoji, markdown headings, tables, "*" bullet, code block — kuch nahi, jab tak user na maange. Bina maange list mat banao.',
       // accuracy and safety
@@ -746,7 +749,7 @@
       // the user calls her "yes sir" style — mirror respect without grovelling
       'DOC FILE RULE: jab user doc/word/pdf/letter/application maange to seedha poora draft likho — placeholders [] me, beech me sawaal nahi. Kabhi mat bolo ki tum file nahi bana sakti ya download nahi kar sakti: phone app tumhare jawab se apne aap .docx/.txt/.md/.csv file bana kar Download button deta hai. "Main file nahi bana sakti, tum copy karo" jaisa jumla bilkul nahi — bas draft do, file app bana degi.',
       'User ke paas git/terminal nahi hai, isliye unhe clone/install karne ko mat bolo. GitHub ka public code padhna ho to tum khud jenniFetchRepo(tool) se padh sakti ho — jawab me links aur seedha code sample do.',
-      'Kaam pakadne par turant haan bolo — "haan yaar, kar deti hoon", "chal, dekh rahi hoon", "ok done" — jab tak koi cheez sach me mumkin na ho. Pehle "haan" (short ack), phir kaam, phir ek line ka natija. Jhoothi confirmation mat do: jo tum nahi kar sakti (message bhejna, paisa bhejna, file save karna) usme "ye main nahi kar sakti, par tumhare liye ye kar sakti hoon…" bolo.'
+      'Kaam pakadne par turant haan bolo — "haan sir, kar deti hoon", "ji sir, dekh rahi hoon", "done sir" — jab tak koi cheez sach me mumkin na ho. Pehle "haan sir" (short ack), phir kaam, phir ek line ka natija. Jhoothi confirmation mat do: jo tum nahi kar sakti (message bhejna, paisa bhejna, file save karna) usme "ye main nahi kar sakti sir, par aapke liye ye kar sakti hoon…" bolo.'
     ]
   };
 
@@ -1335,6 +1338,14 @@
     }
   }
 
+  /* Last turn's real timings, shown in the app bar ("ready · 430 ms"). */
+  function latencyLabel() {
+    const ms = Math.round(Number(state.lastLatency) || 0);
+    if (!ms) return '';
+    if (ms < 1000) return ms + ' ms';
+    return (ms / 1000).toFixed(1) + ' s';
+  }
+
   function setStatus(kind, text) {
     const dot = $('brandDot');
     const meta = $('brandMeta');
@@ -1397,6 +1408,14 @@
     }
     if (PRO) secSet(LS.activity, PRO.recordIntent(secGet(LS.activity, {}), PRO.intentOf(clean), now()));
 
+    // A live session answers typed text on the same socket (no extra round-trip).
+    if (live.state === 'live' && liveSendText(clean)) {
+      state.chat.push({ role: 'me', text: clean });
+      paintChat();
+      $('input').value = '';
+      autoGrow($('input'));
+      return;
+    }
     state.busy = true;
     // Turn token: an interrupted turn must not clear the flag that the newer
     // turn just set, or two replies would interleave in the transcript.
@@ -1417,6 +1436,7 @@
     paintChat();
     setStatus('busy');
 
+    const turnStart = now();
     let reply = '';
     let untrusted = false;                 // external text in this turn → it may not write memory
     const speaker = (voice.mode || options.speakAlways) && voiceEnabled() && window.speechSynthesis ? createSpeaker() : null;
@@ -1442,8 +1462,18 @@
         if (learned.length) memory.compact();
       }
 
+      // Greeting / "haan sir" / "ok" in voice mode is answered in ~0 ms — no
+      // model round-trip at all. This is the single biggest perceived-speed win.
+      const quick = FAST && voice.mode && options.fromVoice ? FAST.quickReply(clean) : null;
+      if (quick) {
+        reply = quick;
+        pending.text = quick;
+        pending.pending = false;
+        paintChat();
+      }
+
       let delegated = null;
-      const nm = nmClient();
+      const nm = !reply && nmClient();
       if (nm && CN && CN.wantsDelegation(clean)) {
         try {
           delegated = await nm.delegate(CN.stripPrefix(clean));
@@ -1452,7 +1482,7 @@
       const turn = { tainted: Boolean(repoContext) };
       if (delegated || repoContext) untrusted = true;
       let usedTools = false;
-      if (!delegated && TOOLS && !state.noTools && TOOLS.needsTools(clean)) {
+      if (!reply && !delegated && TOOLS && !state.noTools && TOOLS.needsTools(clean)) {
         try {
           reply = await runToolTurn(clean, repoContext, turn);
           usedTools = Boolean(reply);
@@ -1467,10 +1497,10 @@
       } else if (delegated) {
         reply = ['NeverMind agents (' + delegated.status + '):', delegated.summary]
           .concat(delegated.files.map((f) => `[${f.name}](${f.url})`)).join('\n\n');
-      } else {
+      } else if (!reply) {
         reply = await askProvider(
           conversationForApi(clean + repoContext),
-          { maxTokens: voice.mode ? 260 : 600, onDelta, onReset, turnToken: token }
+          { maxTokens: voice.mode ? 160 : 600, temperature: voice.mode ? 0.55 : 0.8, onDelta, onReset, turnToken: token }
         );
       }
 
@@ -1495,7 +1525,9 @@
         if (ops.length && !untrusted) { snapshot(); saveNotes(BRAIN.applyOps(loadNotes(), ops)); toast('Memory update ho gayi', false); }
       }
       if (!delegated) {
-        const v = await verifyReply(reply, clean, repoContext, !voice.mode && !(speaker && speaker.spoken()));
+        // Voice: no repair round-trip (it doubles latency for a slightly cleaner
+        // sentence). Typed chat keeps the full check-and-fix behaviour.
+        const v = await verifyReply(reply, clean, repoContext, !voice.mode && !options.fromVoice && !(speaker && speaker.spoken()));
         reply = v.reply;
         if (v.checks) pending.checks = v.checks;
       }
@@ -1507,7 +1539,9 @@
       }
       pending.pending = false;
       pending.text = reply;
-      setStatus('ok', providerName() + ' · ' + state.cfg.model);
+      state.lastLatency = now() - turnStart;          // whole turn, what the user actually waits
+      const took = latencyLabel();
+      setStatus('ok', providerName() + ' · ' + state.cfg.model + (took ? ' · ' + took : ''));
     } catch (error) {
       pending.pending = false;
       if (error && error.code === 'CANCELLED') {
@@ -2090,6 +2124,219 @@
     return (payload && (payload.text || '')).trim();
   }
 
+  /* ══════════════════════════════════════════════════════════════ LIVE VOICE
+
+     Gemini 2.5 Flash native audio, full duplex: one WebSocket carries the mic up
+     and her voice down, so she hears the user while she is still talking and a
+     spoken word stops her mid-sentence (server-side VAD + interrupt). That is
+     the "phone call" feel; the turn-based loop below is the fallback and keeps
+     working exactly as before when Live is off or unavailable.
+     ---------------------------------------------------------------------- */
+
+  const liveOn = () => {
+    try { return localStorage.getItem('jenni_live_on') === '1'; } catch (error) { return false; }
+  };
+
+  /* The Live API needs a Gemini key. If the active provider is Gemini it reuses
+     that key; otherwise the key saved under "Live voice" is used, so a Groq-only
+     setup can still have a native-audio voice. */
+  function liveKey() {
+    const cfg = state.cfg || {};
+    if (isGemini(cfg) && cfg.apiKey) return cfg.apiKey;
+    return String(cfg.liveKey || '').trim();
+  }
+
+  function liveInstructions() {
+    const manner = PERSONA_SHARED ? PERSONA_SHARED.MANNER.join(' ') : 'Address the user as "sir", be humble and very short.';
+    return [
+      PERSONA.lines.join(' '),
+      manner,
+      'Ye ek live phone call hai. Ek-do chhote vaakya bolo, phir ruk jao taaki user bol sake. Lists, markdown, emoji — kuch nahi.',
+      'Aaj: ' + new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.',
+      'Never ask for or repeat API keys, passwords or personal identifiers.'
+    ].join(' ');
+  }
+
+  const live = {
+    socket: null,
+    ctx: null,
+    stream: null,
+    node: null,
+    player: null,
+    state: 'off',          // off | connecting | live | closing
+    retries: 0,
+    startedAt: 0,
+    firstAudioAt: 0,
+    said: ''
+  };
+
+  function liveAvailable() {
+    return Boolean(LIVE && window.WebSocket && (window.AudioContext || window.webkitAudioContext));
+  }
+
+  /** Open the duplex session. */
+  async function startLive() {
+    if (!liveAvailable()) throw new Error('Live voice is browser me nahi chalta.');
+    const key = liveKey();
+    if (!key) throw new Error('Live voice ke liye Gemini key chahiye (Setup → Live voice).');
+    if (live.state === 'live') return;
+    if (live.socket && live.state === 'connecting') return;
+
+    live.state = 'connecting';
+    live.startedAt = now();
+    live.firstAudioAt = 0;
+    live.said = '';
+    paintVoiceUi();
+
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    live.ctx = live.ctx || new Ctx();
+    if (live.ctx.state === 'suspended') { try { await live.ctx.resume(); } catch (error) { /* ignore */ } }
+
+    const ws = new WebSocket(LIVE.url(key, 'v1beta'));
+    live.socket = ws;
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify(LIVE.setupMessage({
+        model: (state.cfg && state.cfg.liveModel) || LIVE.MODELS[0],
+        voice: (state.cfg && state.cfg.liveVoice) || LIVE.DEFAULT_VOICE,
+        instructions: liveInstructions()
+      })));
+    };
+
+    ws.onmessage = async (event) => {
+      const raw = typeof event.data === 'string' ? event.data : await blobText(event.data);
+      const packet = LIVE.readPacket(raw);
+      if (!packet) return;
+      if (packet.kind === 'ready') {
+        live.state = 'live';
+        live.retries = 0;
+        paintVoiceUi();
+        startLiveMic();
+        return;
+      }
+      if (packet.kind === 'audio') {
+        if (!live.firstAudioAt) live.firstAudioAt = now();
+        live.player = live.player || LIVE.createPlayer(live.ctx, packet.rate);
+        live.player.play(LIVE.decodePcm(packet.pcm));
+        voice.speaking = true;
+        paintVoiceUi();
+        return;
+      }
+      if (packet.kind === 'text') {
+        if (packet.role === 'jenni') {
+          live.said = (live.said + ' ' + packet.text).slice(-800);
+          setTranscript(packet.text, false);
+        } else {
+          setTranscript(packet.text, false);
+          voice.lastUserAt = now();
+        }
+        return;
+      }
+      if (packet.kind === 'interrupted') {
+        if (live.player) live.player.stop();      // the user spoke over her — go quiet now
+        voice.speaking = false;
+        paintVoiceUi();
+        return;
+      }
+      if (packet.kind === 'turnComplete') {
+        voice.speaking = false;
+        paintVoiceUi();
+        return;
+      }
+      if (packet.kind === 'close') closeLive('remote');
+    };
+
+    ws.onerror = () => { /* onclose carries the actionable reason */ };
+    ws.onclose = (event) => closeLive(event && event.reason ? event.reason : 'socket');
+  }
+
+  async function blobText(data) {
+    if (data instanceof Blob) return data.text();
+    if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
+    return String(data || '');
+  }
+
+  /** Microphone → 16 kHz PCM16 → socket, in ~100 ms chunks. */
+  function startLiveMic() {
+    if (!live.ctx || !navigator.mediaDevices || !live.ctx.createMediaStreamSource) return;
+    navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
+      .then((stream) => {
+        if (!voice.mode) { stream.getTracks().forEach((t) => t.stop()); return; }
+        live.stream = stream;
+        const source = live.ctx.createMediaStreamSource(stream);
+        // ScriptProcessor is deprecated but universal; AudioWorklet needs a
+        // separate module file, which is not worth it for a phone app.
+        const node = live.ctx.createScriptProcessor(2048, 1, 1);
+        live.node = node;
+        source.connect(node);
+        node.connect(live.ctx.destination);
+        node.onaudioprocess = (event) => {
+          if (!live.socket || live.socket.readyState !== 1 || live.state !== 'live') return;
+          if (voice.speaking) return;      // half-duplex guard when echo cancellation is weak
+          const input = event.inputBuffer.getChannelData(0);
+          const pcm = AUDIO ? AUDIO.resample(input, live.ctx.sampleRate, LIVE.INPUT_RATE) : input;
+          live.socket.send(JSON.stringify(LIVE.audioMessage(LIVE.encodeMic(pcm))));
+        };
+        voice.listening = true;
+        paintVoiceUi();
+      })
+      .catch(() => {
+        toast('Mic ki permission chahiye — Live voice band, normal voice chalega.', true);
+        closeLive('mic');
+      });
+  }
+
+  function stopLiveMic() {
+    if (live.node) { try { live.node.disconnect(); } catch (error) { /* ignore */ } live.node.onaudioprocess = null; live.node = null; }
+    if (live.stream) { live.stream.getTracks().forEach((t) => t.stop()); live.stream = null; }
+    voice.listening = false;
+  }
+
+  /** Close the session; restart once or twice if the provider dropped us. */
+  function closeLive(reason) {
+    const wasLive = live.state === 'live' || live.state === 'connecting';
+    if (!live.socket && live.state === 'off' && !voice.speaking) return;   // nothing to close
+    const ws = live.socket;
+    live.socket = null;                                    // detach first so close() cannot re-enter
+    live.state = 'off';
+    stopLiveMic();
+    if (live.player) live.player.stop();
+    if (ws) {
+      ws.onclose = null; ws.onmessage = null; ws.onerror = null;
+      try { ws.close(); } catch (error) { /* ignore */ }
+    }
+    voice.speaking = false;
+    paintVoiceUi();
+    if (!voice.mode) return;
+    const retryable = reason !== 'user' && reason !== 'mic' && !/key|quota|permission/i.test(String(reason));
+    if (wasLive && retryable && live.retries < 2) {
+      live.retries += 1;
+      toast('Live connection toot gaya — dobara jod rahi hoon…', true);
+      setTimeout(() => { if (voice.mode) startLive().catch(fallbackToTurnLoop); }, 600 * live.retries);
+      return;
+    }
+    if (reason !== 'user') fallbackToTurnLoop();
+  }
+
+  function fallbackToTurnLoop() {
+    if (!voice.mode) return;
+    live.state = 'off';
+    try { localStorage.setItem('jenni_live_on', '0'); } catch (error) { /* ignore */ }
+    if (!voice.warnedFallback) {
+      voice.warnedFallback = true;
+      toast('Live voice nahi chal payi — normal voice mode chalu hai.', true);
+    }
+    paintVoiceUi();
+    listenOnce();
+  }
+
+  /** Typed text while a live session is open goes down the same socket. */
+  function liveSendText(text) {
+    if (!live.socket || live.socket.readyState !== 1 || live.state !== 'live') return false;
+    live.socket.send(JSON.stringify(LIVE.textMessage(text)));
+    return true;
+  }
+
   /* ── the loop ──────────────────────────────────────────────────────────── */
 
   function setTranscript(text, isFinal) {
@@ -2114,10 +2361,12 @@
     }
     const label = $('voiceState');
     if (label) {
+      const liveNow = live.state === 'live';
       label.textContent = !voice.mode ? 'Voice mode band'
-        : voice.speaking ? 'Bol rahi hoon…'
-          : voice.listening ? 'Sun rahi hoon…'
-            : 'Voice mode on';
+        : live.state === 'connecting' ? 'Live jod rahi hoon…'
+          : voice.speaking ? (liveNow ? 'Bol rahi hoon — bolo to ruk jaungi' : 'Bol rahi hoon…')
+            : voice.listening ? (liveNow ? 'Live · sun rahi hoon' : 'Sun rahi hoon…')
+              : 'Voice mode on';
     }
     const foot = $('composerFoot');
     if (foot && voice.mode) {
@@ -2148,7 +2397,7 @@
 
   function startVoiceMode() {
     if (!voiceEnabled()) { toast('Voice OFF hai — upar speaker button se ON karo', true); return; }
-    if (!state.cfg || !state.cfg.apiKey) {
+    if (!state.cfg || !(state.cfg.apiKey || (liveOn() && liveKey()))) {
       openSheet('setup');
       setResult('setupResult', 'Voice mode ke liye pehle API key save karo.', 'error');
       return;
@@ -2161,11 +2410,30 @@
     localStorage.setItem('jenni_voice_auto', '1');
     setTranscript('', false);
     paintVoiceUi();
-    listenOnce();
+    // Native-audio full duplex first (Gemini Live): she hears and is heard at the
+    // same time, and a spoken word cuts her off. Falls back to the turn-based
+    // loop when Live is off, unavailable, or has no Gemini key.
+    if (liveOn() && liveAvailable() && liveKey()) {
+      startLive().catch(() => fallbackToTurnLoop());
+      return;
+    }
+    if (liveOn() && live.state === 'connecting') return;   // already on its way
+    // Say why, once per session, instead of silently downgrading.
+    if (liveOn() && !liveAvailable() && !voice.warnedLive) {
+      voice.warnedLive = true;
+      toast('Is browser me Live voice nahi chalti — normal voice mode chalu hai.', true);
+    } else if (liveOn() && liveAvailable() && !liveKey() && !voice.warnedLive) {
+      voice.warnedLive = true;
+      toast('Live voice ke liye Setup me Gemini key daalo.', true);
+    }
+    // Turn-based: greet first, listen second, so "haan sir" is heard instantly.
+    const hello = (PERSONA_SHARED && PERSONA_SHARED.GREETING) || 'Haan sir, ready hoon. Aap kaam boliye, main kar dungi.';
+    speak(hello).then(() => { if (voice.mode) listenOnce(); });
   }
 
   function stopVoiceMode(silent) {
     voice.mode = false;           // first, so nothing schedules a restart
+    closeLive('user');
     haltLoop();
     stopSpeaking();
     clearTimeout(voice.recordingTimer);
@@ -2183,6 +2451,35 @@
   function toggleVoiceMode() {
     if (voice.mode) stopVoiceMode();
     else startVoiceMode();
+  }
+
+  /** Setup → Live voice: save key/model/voice, and switch the engine on/off. */
+  function saveLiveConfig() {
+    const cfg = Object.assign({}, state.cfg || {});
+    const key = String(($('liveKey') && $('liveKey').value) || '').trim();
+    if (/•/.test(key)) { /* masked, untouched */ } else cfg.liveKey = key;
+    cfg.liveModel = (($('liveModel') && $('liveModel').value) || '').trim() || LIVE.MODELS[0];
+    cfg.liveVoice = (($('liveVoice') && $('liveVoice').value) || '').trim() || LIVE.DEFAULT_VOICE;
+    if (state.cfg && state.cfg.apiKey) saveConfig(Object.assign({}, state.cfg, cfg));
+    else state.cfg = cfg;
+    const on = Boolean(($('liveToggle') && $('liveToggle').checked));
+    try { localStorage.setItem('jenni_live_on', on ? '1' : '0'); } catch (error) { /* ignore */ }
+    setResult('liveResult', on
+      ? 'Live voice ON — bolo, main sun rahi hoon; tum bologe to main ruk jaungi.'
+      : 'Live voice OFF — normal turn-by-turn voice chalegi.', on ? 'ok' : '');
+  }
+
+  function paintLiveConfig() {
+    if (!$('liveToggle')) return;
+    const cfg = state.cfg || {};
+    $('liveToggle').checked = liveOn();
+    $('liveKey').value = cfg.liveKey || (isGemini(cfg) ? '•••••••• (provider key)' : '');
+    $('liveModel').value = cfg.liveModel || LIVE.MODELS[0];
+    $('liveVoice').value = cfg.liveVoice || LIVE.DEFAULT_VOICE;
+    const ready = liveOn() && liveKey();
+    setResult('liveResult', ready
+      ? 'Live voice ready — Gemini 2.5 Flash native audio (free tier).'
+      : 'Live voice ke liye Gemini key daalo (ya provider Gemini rakho).', ready ? 'ok' : '');
   }
 
   /* A spoken message is handled exactly like a typed one, but the reply is
@@ -2386,6 +2683,7 @@
   /* ── Setup: choose how Jenni speaks and listens ─────────────────────────── */
   function paintVoiceEngineForm() {
     if (!$('vTtsEngine')) return;
+    if (LIVE) paintLiveConfig();
     const c = loadVoiceCfg();
     $('vTtsEngine').value = c.tts.engine; $('vKey').value = c.tts.key; $('vVoice').value = c.tts.voice;
     $('vModel').value = c.tts.model; $('vBase').value = c.tts.base;
@@ -2407,6 +2705,29 @@
       say(downgraded ? 'Save hua, par kuch adhura tha (key/voice/https URL) — wahan phone ki awaaz rakhi hai.' : 'Save ho gaya. "Awaaz test" dabao.', downgraded ? 'error' : 'ok');
       paintVoiceEngineForm();
     });
+    if ($('btnLiveSave')) {
+      $('btnLiveSave').addEventListener('click', saveLiveConfig);
+      $('liveToggle').addEventListener('change', saveLiveConfig);
+    }
+    if ($('btnLiveTest')) {
+      $('btnLiveTest').addEventListener('click', async () => {
+        saveLiveConfig();
+        const wasMode = voice.mode;
+        voice.mode = true;                      // startLive expects an active mode
+        try {
+          say('Live voice jod rahi hoon…', 'busy');
+          await startLive();
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          setResult('liveResult', live.state === 'live'
+            ? `Live ready ✓ (${live.firstAudioAt ? Math.max(0, live.firstAudioAt - live.startedAt) + ' ms first audio' : 'connect ho gaya'})`
+            : 'Jod nahi payi — key/permission dekho.', live.state === 'live' ? 'ok' : 'error');
+        } catch (error) {
+          setResult('liveResult', error.message, 'error');
+        } finally {
+          if (!wasMode) { voice.mode = false; closeLive('user'); paintVoiceUi(); }
+        }
+      });
+    }
     $('btnVoicesLoad').addEventListener('click', async () => {
       try {
         say('Voices la rahi hoon…', 'busy');
@@ -2986,8 +3307,8 @@
     /* Everything that took time to build goes in the backup — the key never does. */
     return {
       drafts: state.drafts,
-      // Spare provider keys are secrets too: back them out, never export them.
-      config: state.cfg ? { ...state.cfg, apiKey: '', fallbackKeys: {} } : null,
+      // Spare provider keys and the live-voice key are secrets too: back them out.
+      config: state.cfg ? { ...state.cfg, apiKey: '', fallbackKeys: {}, liveKey: '' } : null,
       drive: state.drive,
       notes: state.notes,
       memory: memory ? memory.all() : [],
@@ -4145,6 +4466,7 @@
       // "Chup" means quiet for real: stop the stream too, or the rest of the
       // answer keeps arriving and gets read out anyway.
       if (voice.activeSpeaker && voice.activeSpeaker.mute) voice.activeSpeaker.mute();
+      if (live.player) live.player.stop();
       stopSpeaking();
       if (state.busy) interruptTurn();
       if (voice.mode) scheduleListen(300);

@@ -169,6 +169,8 @@ test('proxies chat to the configured provider and returns only its assistant rep
       assert.equal(providerRequest.body.model, TEST_ENV.AI_MODEL);
       assert.equal(providerRequest.body.messages[0].role, 'system');
       assert.match(providerRequest.body.messages[0].content, /Never claim you did/);
+      assert.match(providerRequest.body.messages[0].content, /"sir"/, 'the server prompt keeps the respectful "sir" manner');
+      assert.match(providerRequest.body.messages[0].content, /very short/i, 'the server prompt asks for very short replies');
       assert.deepEqual(providerRequest.body.messages.slice(1), [
         { role: 'user', content: 'Say hi' },
         { role: 'assistant', content: 'Earlier reply' },

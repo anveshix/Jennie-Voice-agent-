@@ -2,8 +2,8 @@ importScripts('./brain.js', './remind-store.js');
 
 /* Offline shell for the phone app. Only same-origin GETs are cached; provider
    and Google API calls always go to the network. */
-const CACHE = 'jenni-phone-v15';
-const FILES = ['./', './index.html', './app.css', './net.js', './security.js', './docs.js', './github.js', './agent.js', './office.js', './memory.js', './budget.js', './verify.js', './tools.js', './google.js', './proactive.js', './evals.js', './audio.js', './voices.js', './brain.js', './remind-store.js', './connectors.js', './app.js', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
+const CACHE = 'jenni-phone-v17';
+const FILES = ['./', './index.html', './app.css', './net.js', './fast.js', './persona.js', './live.js', './security.js', './docs.js', './github.js', './agent.js', './office.js', './memory.js', './budget.js', './verify.js', './tools.js', './google.js', './proactive.js', './evals.js', './audio.js', './voices.js', './brain.js', './remind-store.js', './connectors.js', './app.js', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(FILES)).then(() => self.skipWaiting()));

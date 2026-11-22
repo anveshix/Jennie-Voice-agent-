@@ -241,6 +241,25 @@ level-headed friend** living on your phone.
 The persona is a prompt (`docs/app.js` → `PERSONA`, `server.js` → `SYSTEM_PROMPT`), not a fine-tuned model,
 so it travels with whichever provider you plug in.
 
+## Speed, respect and a real conversation (voice)
+
+- **Talk over her and she stops.** Setup → *Live voice* turns on Gemini 2.5 Flash native audio
+  (`docs/live.js`): one WebSocket carries the mic up and her voice down as 16 kHz/24 kHz PCM, so she hears
+  the user while she is still speaking and a spoken word cuts her off mid-sentence
+  (`START_OF_ACTIVITY_INTERRUPTS` + `interrupted` → the queued audio is dropped). Free tier of the Gemini
+  Developer API; it reuses the Gemini provider key, or takes its own key, which stays inside the PIN vault.
+  Live is opt-in — with it off, or with no Gemini key, the app keeps the turn-by-turn loop and says so once.
+- **No pointless waiting.** Greetings and acknowledgements ("hello", "haan", "theek hai", "thank you") are
+  answered locally in milliseconds with no model call (`docs/fast.js`), voice mode greets the moment it
+  opens, spoken replies are capped at 160 tokens / lower temperature, and the self-check and repair passes
+  are skipped for spoken turns (they cost a second round-trip). The app bar shows the real turn time
+  ("ready · 430 ms") — an honest number instead of a promise of microseconds.
+- **"Haan sir" respect.** The shared persona (`docs/persona.js`, also used by the server prompt) addresses the
+  owner as *sir*, stays humble and emotionally aware, and keeps answers to one or two short lines —
+  "haan sir, ready hoon. Aap kaam boliye, main kar dungi."
+- **Two-way loop, even without Live.** After every answer the mic reopens, a new spoken sentence interrupts a
+  turn that is still thinking, and "Chup" stops the stream itself.
+
 ## Documents and failure handling
 
 - **Documents are always offered.** Any reply that reads like a letter/application (formal header + closing or
