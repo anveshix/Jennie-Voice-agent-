@@ -761,6 +761,11 @@ a {
 .bubble__body a:hover { color: #bff1ff; }
 .bubble__body h4 { margin: 8px 0 3px; font-size: 13px; color: #c8ffe9; }
 
+/* A provider outage must say "try again", not "check your setup". */
+.bubble__action[data-tone="warn"] {
+  color: #f4c15d;
+}
+
 .bubble__action {
   margin-top: 9px;
   padding: 4px 9px;

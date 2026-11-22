@@ -1470,49 +1470,116 @@
     if (form) form.setAttribute('aria-busy', busy ? 'true' : 'false');
   }
 
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /* Same classification the phone app and the proxy use: a 503/502/429 is the
+     provider having a bad minute, so retry it; a 4xx is about the setup and
+     will fail identically forever. */
+  function errorCode(status, payload) {
+    const code = payload && payload.error && payload.error.code;
+    if (code) return code;
+    if (status === 401 || status === 403) return 'AUTH';
+    if (status === 404) return 'MODEL_NOT_FOUND';
+    if (status === 429) return 'BUSY';
+    if (status >= 500) return 'HTTP_5XX';
+    return 'HTTP_ERROR';
+  }
+
+  function retryable(error) {
+    if (!error) return false;
+    if (['TIMEOUT', 'NETWORK', 'HTTP_5XX', 'BUSY', 'AI_PROVIDER_OVERLOADED', 'AI_TIMEOUT', 'AI_UNAVAILABLE', 'AI_RATE_LIMITED', 'AI_PROVIDER_ERROR', 'AI_EMPTY_RESPONSE'].includes(error.code)) return true;
+    return [408, 425, 429, 500, 502, 503, 504].includes(Number(error.status));
+  }
+
   async function askAssistant(userText) {
     const requestMessages = [...state.conversation, { role: 'user', content: userText }].slice(-12);
     state.isResponding = true;
     setComposerBusy(true);
-    setAIStatus('working', 'Jenni is thinking…');
     const controller = new AbortController();
     state.requestController = controller;
     const pending = appendMessage('jenni', '', { pending: true });
 
+    let lastError = null;
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Jenni-Token': localStorage.getItem('jenni_access_token') || '' },
-        cache: 'no-store',
-        body: JSON.stringify({ messages: requestMessages }),
-        signal: controller.signal
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        const serverMessage = payload?.error?.message;
-        if (serverMessage) throw new Error(serverMessage);
-        if (response.status === 404 || response.status === 405) {
-          throw new Error('The AI server route is not available on this page. Run npm start and open the local server URL.');
+      for (let attempt = 0; attempt <= 2; attempt += 1) {
+        if (attempt > 0) {
+          setAIStatus('working', `Provider busy — retrying (${attempt + 1}/3)…`);
+          await sleep(600 * Math.pow(2, attempt - 1));
+          if (controller.signal.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+        } else {
+          setAIStatus('working', 'Jenni is thinking…');
         }
-        throw new Error(`AI request failed (HTTP ${response.status}).`);
+        let response;
+        try {
+          response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-Jenni-Token': localStorage.getItem('jenni_access_token') || '' },
+            cache: 'no-store',
+            body: JSON.stringify({ messages: requestMessages }),
+            signal: controller.signal
+          });
+        } catch (networkError) {
+          if (networkError.name === 'AbortError') throw networkError;
+          lastError = Object.assign(new Error('I could not reach the AI server. Run npm start and open the server URL, then try again.'), { code: 'NETWORK' });
+          if (attempt < 2) continue;
+          throw lastError;
+        }
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          const serverError = (payload && payload.error) || {};
+          const code = errorCode(response.status, payload);
+          const err = Object.assign(new Error(serverError.message || (response.status === 404 || response.status === 405
+            ? 'The AI server route is not available on this page. Run npm start and open the local server URL.'
+            : `AI request failed (HTTP ${response.status}).`)), {
+            code,
+            status: response.status,
+            retryAfterMs: Number.isFinite(serverError.retryAfterMs) ? serverError.retryAfterMs : null
+          });
+          lastError = err;
+          if (retryable(err) && attempt < 2) continue;
+          throw err;
+        }
+        const reply = String(payload?.reply || '').trim();
+        if (!reply) {
+          lastError = Object.assign(new Error('The AI provider returned an empty reply.'), { code: 'EMPTY_REPLY' });
+          if (attempt < 2) continue;
+          throw lastError;
+        }
+        if (!state.unlocked) return;
+        state.conversation = [...requestMessages, { role: 'assistant', content: reply }].slice(-20);
+        state.lastGeneratedMarkdown = reply;
+        if (pending) pending.remove();
+        appendMessage('jenni', reply, { saveAsDraft: true });
+        speakHumble(reply);
+        lastError = null;
+        return;
       }
-      const reply = String(payload?.reply || '').trim();
-      if (!reply) throw new Error('The AI provider returned an empty reply. Please try again.');
-      if (!state.unlocked) return;
-      state.conversation = [...requestMessages, { role: 'assistant', content: reply }].slice(-20);
-      state.lastGeneratedMarkdown = reply;
-      if (pending) pending.remove();
-      appendMessage('jenni', reply, { saveAsDraft: true });
-      speakHumble(reply);
+      throw lastError || new Error('The AI request failed.');
     } catch (error) {
       if (pending) pending.remove();
       if (!state.unlocked || error.name === 'AbortError') return;
-      const message = error instanceof TypeError
-        ? 'I could not reach the AI server. Run npm start and open the server URL, then try again.'
-        : (error.message || 'The AI request failed. Please try again.');
+      const wait = Number(error.retryAfterMs);
+      const retryHint = Number.isFinite(wait) && wait >= 1000
+        ? ` Try again in about ${Math.round(wait / 1000)}s.`
+        : (retryable(error) ? ' This looks temporary on the provider side — press Retry in a moment.' : '');
+      const message = `${error.message || 'The AI request failed.'}${retryHint}`;
       const reply = `I couldn’t get an AI response. ${message}`;
-      appendMessage('jenni', reply);
-      speakHumble(reply);
+      const node = appendMessage('jenni', reply);
+      if (node && retryable(error)) {
+        // An actionable retry instead of a dead end.
+        const bubble = node.querySelector('.bubble');
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'bubble__action';
+        retry.textContent = 'Retry';
+        retry.addEventListener('click', () => {
+          retry.remove();
+          node.remove();
+          askAssistant(userText);
+        });
+        if (bubble) bubble.appendChild(retry);
+      }
+      speakHumble('Provider abhi busy hai. Thodi der baad phir try karein.');
     } finally {
       if (state.requestController === controller) state.requestController = null;
       state.isResponding = false;
