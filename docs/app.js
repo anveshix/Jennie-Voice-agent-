@@ -1193,6 +1193,7 @@
       if (speaker) speaker.push(chunk);
     };
     const onReset = () => { streamed = ''; pending.text = ''; if (speaker) speaker.reset(); };
+    voice.activeSpeaker = speaker;
     try {
       if (navigator.onLine === false) throw Object.assign(new Error('Internet nahi hai — connect hote hi dobara bhejna.'), { code: 'OFFLINE' });
       // Voice: keep the reply short so speech starts fast. Typed: allow more.
@@ -1341,7 +1342,12 @@
     lastHandledAt: 0,
     cooldownUntil: 0,
     stopping: false,
-    restartTimer: null
+    restartTimer: null,
+    wake: null,
+    lastWake: 0,
+    barge: null,
+    saying: '',
+    activeSpeaker: null
   };
 
   const BCP = { 'hi-IN': 'hi-IN', 'en-IN': 'en-IN', 'en-US': 'en-US', 'en-GB': 'en-GB' };
@@ -1403,8 +1409,8 @@
       try {
         const u = makeUtterance(clean);
         pendingCount += 1; spokenCount += 1;
-        voice.speaking = true; paintVoiceUi();
-        const end = () => { pendingCount -= 1; if (pendingCount <= 0) { voice.speaking = false; paintVoiceUi(); } settle(); };
+        voice.speaking = true; voice.saying = (voice.saying + ' ' + clean).slice(-1200); paintVoiceUi(); onSpeakingChanged(true);
+        const end = () => { pendingCount -= 1; if (pendingCount <= 0) { voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false); } settle(); };
         u.onend = end; u.onerror = end;
         window.speechSynthesis.speak(u);
       } catch (e) { /* speech unavailable */ }
@@ -1428,6 +1434,7 @@
         if (i >= 0) { buf = buf.slice(0, i); cut = true; }
         drain(cut);
       },
+      mute() { cut = true; buf = ''; },
       reset() { buf = ''; cut = false; try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ } pendingCount = 0; spokenCount = 0; },
       spoken: () => spokenCount > 0,
       finish() {
@@ -1455,9 +1462,11 @@
         utterance.pitch = 1.08;
         utterance.volume = 1;
         voice.speaking = true;
+        voice.saying = clean;
         paintVoiceUi();
-        utterance.onend = () => { voice.speaking = false; paintVoiceUi(); resolve(true); };
-        utterance.onerror = () => { voice.speaking = false; paintVoiceUi(); resolve(false); };
+        onSpeakingChanged(true);
+        utterance.onend = () => { voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false); resolve(true); };
+        utterance.onerror = () => { voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false); resolve(false); };
         window.speechSynthesis.speak(utterance);
       } catch (error) {
         voice.speaking = false;
@@ -1575,6 +1584,73 @@
     stopListening();
     setTimeout(() => { voice.stopping = false; }, 120);
   }
+
+
+  /* ── "Hey Jenni" (wake word) and talking over her (barge-in) ───────────────
+     Both use the browser's own speech recognition, so they work only while the
+     page is open and visible — a browser limit, not a choice. Barge-in is off by
+     default: without headphones the phone can hear itself. */
+  const WAKE_RE = /(?:\b(?:hey|hi|hello|ok|okay|arre|are|oye)\s+)?\b(jenni|jenny|jennie|jeni|jenie|जेनी|जेन्नी|जेनि)\b[\s,.!?]*/i;
+  const wakeOn = () => localStorage.getItem('jenni_wake_on') === '1';
+  const bargeOn = () => localStorage.getItem('jenni_barge_on') === '1';
+
+  function startWake() {
+    if (!wakeOn() || voice.mode || voice.wake || document.hidden || !voiceEnabled() || !state.cfg || !state.cfg.apiKey) return;
+    const Ctor = speechRecognitionCtor();
+    if (!Ctor) return;
+    const r = new Ctor();
+    r.lang = voice.lang; r.continuous = true; r.interimResults = true;
+    r.onresult = (ev) => {
+      for (let i = ev.resultIndex; i < ev.results.length; i += 1) {
+        const text = ev.results[i][0].transcript;
+        const m = text.match(WAKE_RE);
+        if (!m || now() - voice.lastWake < 2500) continue;
+        const rest = text.slice(m.index + m[0].length).trim();
+        if (rest && !ev.results[i].isFinal) return;            // wait until the sentence is complete
+        voice.lastWake = now();
+        stopWake();
+        startVoiceMode();
+        if (rest && rest.split(/\s+/).length >= 2) handleVoiceInput(rest);
+        return;
+      }
+    };
+    r.onend = () => { if (voice.wake === r) { voice.wake = null; if (wakeOn() && !voice.mode && !document.hidden) setTimeout(startWake, 700); } };
+    r.onerror = (e) => {
+      if (voice.wake === r) voice.wake = null;
+      if (e && /not-allowed|service-not-allowed/.test(e.error)) { localStorage.setItem('jenni_wake_on', '0'); toast('Mic permission chahiye — Hey Jenni band', true); }
+    };
+    voice.wake = r;
+    try { r.start(); } catch (e) { voice.wake = null; }
+  }
+  function stopWake() {
+    const r = voice.wake; voice.wake = null;
+    if (r) { r.onend = null; r.onerror = null; try { r.abort(); } catch (e) { /* ignore */ } }
+  }
+
+  function startBarge() {
+    if (!bargeOn() || !voice.mode || voice.barge || !MEM) return;
+    const Ctor = speechRecognitionCtor();
+    if (!Ctor) return;
+    const r = new Ctor();
+    r.lang = voice.lang; r.continuous = true; r.interimResults = true;
+    r.onresult = (ev) => {
+      let text = '', final = false;
+      for (let i = ev.resultIndex; i < ev.results.length; i += 1) { text += ev.results[i][0].transcript; final = final || ev.results[i].isFinal; }
+      const words = text.trim().split(/\s+/).filter(Boolean);
+      if (words.length < 3 || MEM.overlap(text, voice.saying) >= 0.5) return;      // too short, or just her own voice
+      if (voice.speaking) { if (voice.activeSpeaker) voice.activeSpeaker.mute(); stopSpeaking(); }
+      if (final) { stopBarge(); handleVoiceInput(text); }
+    };
+    r.onend = () => { if (voice.barge === r) voice.barge = null; };
+    r.onerror = () => { if (voice.barge === r) voice.barge = null; };
+    voice.barge = r;
+    try { r.start(); } catch (e) { voice.barge = null; }
+  }
+  function stopBarge() {
+    const r = voice.barge; voice.barge = null;
+    if (r) { r.onend = null; r.onerror = null; try { r.abort(); } catch (e) { /* ignore */ } }
+  }
+  function onSpeakingChanged(on) { if (on) startBarge(); else stopBarge(); }
 
   /* ── fallback: record audio when the browser has no speech recognition ─── */
 
@@ -1713,6 +1789,7 @@
       setResult('setupResult', 'Voice mode ke liye pehle API key save karo.', 'error');
       return;
     }
+    stopWake();
     stopSpeaking();
     voice.mode = true;
     voice.lastHandled = '';
@@ -1733,7 +1810,9 @@
     releaseWakeLock();
     setTranscript('', false);
     paintVoiceUi();
+    stopBarge();
     if (!silent) toast('Voice mode band');
+    setTimeout(startWake, 900);
   }
 
   function toggleVoiceMode() {
@@ -1812,6 +1891,110 @@
     persist('drafts');
     paintDrafts();
     if (!quiet) toast('Draft save ho gaya');
+  }
+
+
+  /* ── companion: suggestions before she is asked ─────────────────────────── */
+  const suggestState = { events: [], at: 0 };
+  const dismissedToday = () => { const v = readJson('jenni_sugg_v1', {}); return v.day === todayIso() ? v.ids || [] : []; };
+  async function refreshEvents() {
+    if (!googleReady() || now() - suggestState.at < 30 * 60000) return;
+    suggestState.at = now();
+    try { suggestState.events = await googleClient().events(1, now()); } catch (e) { suggestState.events = []; }
+  }
+  function paintSuggestions() {
+    const host = $('suggestStrip');
+    if (!host || !PRO || !BRAIN) return;
+    if (security.enabled && !security.dataKey) { host.hidden = true; return; }
+    const list = PRO.suggest({ notes: state.notes, wins: secGet(LS.wins, []), events: suggestState.events, activity: secGet(LS.activity, {}), dismissed: dismissedToday(), nowMs: now(), name: BRAIN.OWNER.name.split(' ')[0] });
+    host.textContent = '';
+    host.hidden = !list.length;
+    list.forEach((sug) => {
+      const chip = document.createElement('div'); chip.className = 'suggest__chip';
+      const txt = document.createElement('span'); txt.textContent = sug.text;
+      const go = document.createElement('button'); go.type = 'button'; go.className = 'suggest__go'; go.textContent = 'Haan';
+      const no = document.createElement('button'); no.type = 'button'; no.setAttribute('aria-label', 'Dismiss'); no.textContent = '✕';
+      go.addEventListener('click', () => { dismissSuggestion(sug.id); runSuggestion(sug.action); });
+      no.addEventListener('click', () => dismissSuggestion(sug.id));
+      chip.append(txt, go, no); host.appendChild(chip);
+    });
+  }
+  function dismissSuggestion(id) {
+    writeJson('jenni_sugg_v1', { day: todayIso(), ids: dismissedToday().concat(id) });
+    paintSuggestions();
+  }
+  function runSuggestion(action) {
+    if (!action) return;
+    if (action.type === 'chat') { send(action.text); return; }
+    if (action.type === 'office') {
+      openSheet('office');
+      $('offType').value = action.doc; renderOfficeFields();
+      if (action.subject && $('off_subject')) $('off_subject').value = action.subject;
+    }
+  }
+
+  /* once a day: old, unreinforced facts fade; decayed ones stop reaching prompts */
+  function dailyHygiene() {
+    if (!MEM || !memory) return;
+    const day = todayIso();
+    if (localStorage.getItem('jenni_decay_day') === day) return;
+    localStorage.setItem('jenni_decay_day', day);
+    const facts = memory.all();
+    const decayed = MEM.decayFacts(facts, now());
+    if (JSON.stringify(decayed) !== JSON.stringify(facts)) secureStore.setItem(LS.memory, JSON.stringify(decayed));
+  }
+
+  /* ── agent mode: autonomy, audit trail, self-test ───────────────────────── */
+  function paintActionLog() {
+    const host = $('actionLog'); if (!host) return;
+    host.textContent = '';
+    secGet(LS.actions, []).slice(0, 12).forEach((a) => {
+      const row = document.createElement('div'); row.className = 'card';
+      row.textContent = `${new Date(a.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · ${a.tool} · ${a.decision}${a.ok ? '' : ' ✗'}`;
+      host.appendChild(row);
+    });
+    if (!host.children.length) host.innerHTML = '<p class="empty">Abhi koi tool-kaam nahi hua.</p>';
+  }
+
+  async function runSelfTest() {
+    if (!EVALS) return;
+    if (!state.cfg || !state.cfg.apiKey) { openSheet('setup'); return; }
+    const out = $('evalOut'), res = $('evalResult'); out.textContent = '';
+    $('btnEval').disabled = true;
+    try {
+      const report = await EVALS.run({
+        ask: (prompt) => askProvider(conversationForApi(prompt, { noHistory: true }), { maxTokens: 500 }),
+        verify: (t) => VERIFY.check(t, { udise: BRAIN.OWNER.udise }),
+        onProgress: (n, total) => setResult('evalResult', `Jaanch ho rahi hai… ${n}/${total}`, 'busy')
+      });
+      const hist = secGet(LS.evals, []);
+      const prev = hist[0];
+      secSet(LS.evals, [{ at: now(), model: state.cfg.model, pct: report.pct, passed: report.passed, total: report.total }].concat(hist).slice(0, 10));
+      const delta = prev ? (report.pct - prev.pct >= 0 ? '+' : '') + (report.pct - prev.pct) + '% pichhli baar se' : 'pehli jaanch';
+      setResult('evalResult', `${report.passed}/${report.total} sahi (${report.pct}%) — ${delta}`, report.pct >= 80 ? 'ok' : 'error');
+      report.results.filter((r) => !r.pass).forEach((r) => {
+        const row = document.createElement('div'); row.className = 'card';
+        row.textContent = `✗ ${r.id}: ${r.why} — ${r.failed.join(', ')}`;
+        out.appendChild(row);
+      });
+    } catch (error) { setResult('evalResult', plainError(error), 'error'); }
+    $('btnEval').disabled = false;
+  }
+
+  function wireAgentSettings() {
+    if ($('autonomySel')) {
+      $('autonomySel').value = localStorage.getItem(LS.autonomy) || 'smart';
+      $('autonomySel').addEventListener('change', (ev) => localStorage.setItem(LS.autonomy, ev.target.value));
+    }
+    if ($('wakeToggle')) {
+      $('wakeToggle').checked = wakeOn();
+      $('wakeToggle').addEventListener('change', (ev) => { localStorage.setItem('jenni_wake_on', ev.target.checked ? '1' : '0'); if (ev.target.checked) startWake(); else stopWake(); });
+      $('bargeToggle').checked = bargeOn();
+      $('bargeToggle').addEventListener('change', (ev) => localStorage.setItem('jenni_barge_on', ev.target.checked ? '1' : '0'));
+      document.addEventListener('visibilitychange', () => { if (document.hidden) stopWake(); else startWake(); });
+    }
+    if ($('btnEval')) $('btnEval').addEventListener('click', runSelfTest);
+    setInterval(() => { refreshEvents().then(paintSuggestions); }, 5 * 60000);
   }
 
   /* ── Office desk ───────────────────────────────────────────────────────── */
@@ -1934,14 +2117,14 @@
       const label = document.createElement('span');
       const st = BRAIN.taskState(m);
       label.textContent = m.cat === 'task'
-        ? (st === 'overdue' ? '⚠ ' : '☐ ') + m.text + (m.due ? ' — ' + m.due + (st === 'overdue' ? ' (overdue)' : st === 'today' ? ' (aaj)' : '') : '')
+        ? '☐ ' + m.text + (m.repeat ? ' ↻' : '') + (m.due ? ' — ' + m.due + (st === 'overdue' ? ' (pehle ka)' : st === 'today' ? ' (aaj)' : '') : '')
         : '[' + m.cat + '] ' + m.text;
       label.style.flex = '1';
       const del = document.createElement('button');
       del.type = 'button';
       del.className = 'btn btn--ghost';
       del.textContent = m.cat === 'task' ? 'Done ✓' : 'Delete';
-      del.addEventListener('click', () => saveNotes(loadNotes().filter((x) => x.id !== m.id)));
+      del.addEventListener('click', () => { if (m.cat === 'task' && MEM) completeNote(m.id); else { snapshot(); saveNotes(loadNotes().filter((x) => x.id !== m.id)); } });
       row.append(label, del);
       host.appendChild(row);
     });
@@ -2555,6 +2738,7 @@
     if (name === 'drive') { paintDrive(); listDriveFiles(); paintBackupStatus(); }
     if (name === 'setup') fillSetupForm();
     if (name === 'office') paintOffice();
+    if (name === 'setup') { paintActionLog(); paintNotes(); }
     rememberScreen(name);
     if (!options.silent) setHash(name);
     paintTabs();
@@ -2724,6 +2908,7 @@
     await hydrate();
     paintNotes(); paintMemory();
     syncReminders();
+    paintSuggestions();
     $('lockScreen').hidden = true;
     $('gate').hidden = true;
     $('app').hidden = false;
@@ -3402,6 +3587,10 @@
     const cfg = state.cfg;
     setStatus(cfg && cfg.apiKey ? 'ok' : '', cfg && cfg.apiKey ? providerName() + ' · ' + cfg.model : 'setup needed');
     maybeBrief();
+    dailyHygiene();
+    refreshEvents().then(paintSuggestions);
+    paintSuggestions();
+    startWake();
     setTimeout(maybeAutoBackup, 4000);
     paintChat();
     paintDrive();
@@ -3587,6 +3776,7 @@
       document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') remindTick(); });
     }
     wireOffice();
+    wireAgentSettings();
     if ($('btnMemAdd') && BRAIN) {
       $('btnMemAdd').addEventListener('click', () => {
         const box = $('memInput');

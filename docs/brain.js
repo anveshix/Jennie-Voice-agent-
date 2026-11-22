@@ -245,7 +245,7 @@
     if (!live.length) return null;
     const overdue = live.filter((t) => taskState(t, now) === 'overdue').length;
     const title = live.length === 1 ? 'Jenni: 1 task pending' : 'Jenni: ' + live.length + ' tasks pending';
-    const counts = (overdue ? overdue + ' overdue, ' : '') + (live.length - overdue) + ' aaj due';
+    const counts = (overdue ? overdue + ' pehle ka, ' : '') + (live.length - overdue) + ' aaj';
     const body = withTitles ? live.map((t) => '• ' + String(t.text || '').slice(0, 60)).slice(0, 4).join('\n') : counts + '. Khol ke dekho.';
     return { title, body, count: live.length, key: iso(istDay(now)) + ':' + live.length };
   }
@@ -257,7 +257,7 @@
     const by = (st) => tasks.filter((t) => taskState(t, now) === st).map((t) => t.text);
     const parts = [];
     const o = by('overdue'), t0 = by('today'), s = by('soon');
-    if (o.length) parts.push('Overdue: ' + o.join('; '));
+    if (o.length) parts.push('Pehle ka pending: ' + o.join('; '));
     if (t0.length) parts.push('Aaj: ' + t0.join('; '));
     if (s.length) parts.push('Agle 2 din: ' + s.join('; '));
     const rest = tasks.length - o.length - t0.length - s.length;

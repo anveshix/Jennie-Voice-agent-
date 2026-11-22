@@ -28,7 +28,7 @@ test('audit: dates, tasks, sensitive data, injection, questions', () => {
   assert.equal(b.parseDueDate('25/11', now), '2026-11-25');
   let m = b.applyOps([], [{ op: 'task', body: 'SA1 report | due 20/11' }, { op: 'task', body: 'notice aaj' }], now);
   assert.deepEqual(m.map((x) => b.taskState(x, now)), ['overdue', 'today']);
-  assert.match(b.briefing(m, now), /Overdue: SA1 report.*Aaj: notice/);
+  assert.match(b.briefing(m, now), /Pehle ka pending: SA1 report.*Aaj: notice/);
   for (const bad of ['call 9876543210', 'password is hunter2', 'mail me at a@b.com', 'aadhaar 1234 5678 9012', 'roll no 42', 'IFSC SBIN0001234']) {
     assert.equal(b.addMemory([], bad).length, 0, bad);
   }
@@ -53,7 +53,7 @@ test('reminders: only overdue/today, titles only when allowed, stable key', () =
   assert.equal(withT.count, 2);
   assert.match(withT.body, /SA1 report/);
   const noT = b.reminderText(items, now, false);
-  assert.ok(!/SA1|fees/.test(noT.body) && /1 overdue, 1 aaj due/.test(noT.body));
+  assert.ok(!/SA1|fees/.test(noT.body) && /1 pehle ka, 1 aaj/.test(noT.body));
   assert.equal(b.reminderText([{ due: '2026-12-30', text: 'x' }], now, true), null);
   assert.equal(withT.key, b.reminderText(items, now, true).key);
 });

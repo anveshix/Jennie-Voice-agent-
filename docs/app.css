@@ -1124,3 +1124,8 @@ code {
 .msg__checks { font-size: .72rem; margin: 4px 6px 0; opacity: .85; }
 .msg__checks.is-ok { color: var(--mint, #2ee6a8); }
 .msg__checks.is-warn { color: #ffb454; }
+
+.suggest { display: flex; flex-direction: column; gap: 6px; padding: 8px 14px 0; }
+.suggest__chip { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.04); font-size: .82rem; }
+.suggest__chip button { border: 0; background: transparent; color: inherit; cursor: pointer; }
+.suggest__go { margin-left: auto; font-weight: 700; color: var(--mint, #2ee6a8); white-space: nowrap; }

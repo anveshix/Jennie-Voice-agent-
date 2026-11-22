@@ -77,3 +77,9 @@ test('verify: weekday, arithmetic, marks, udise, placeholders, S5', () => {
   assert.equal(V.check('call 9876543210').issues[0].code, 's5');
   assert.match(V.repairPrompt(bad.issues), /Monday|monday/);
 });
+
+test('barge-in guard: her own voice is not an interruption, the owner is', () => {
+  const saying = 'Pehle notice ka draft banate hain phir circular bhejte hain';
+  assert.ok(M.overlap('pehle notice ka draft banate hain', saying) >= 0.5);          // echo → ignore
+  assert.ok(M.overlap('rukiye mujhe kuch aur poochna hai', saying) < 0.5);           // owner → interrupt
+});

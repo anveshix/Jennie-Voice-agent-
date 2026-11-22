@@ -382,3 +382,24 @@ Setup → Memory → **Task reminders**. Overdue/today tasks trigger a notificat
 - **Streaming:** replies appear word by word, and in voice mode each finished sentence is spoken while the rest is still being written (first words after ~1 s instead of after the whole answer). Memory tags are never read aloud. Providers that do not stream fall back to the old whole-reply path.
 - **Office tab:** notice, circular, official letter, application, e-mail, note-sheet, **duty roster / deployment routine** and **class routine** in one tap. Set the school profile once (letterhead, UDISE, signatory); reference numbers auto-increment per session (`ABC/2026-27/NTC/3`). Output is editable, saves to Drafts, downloads as `.docx` (tables are real Word tables), and can be polished/translated by the model on request.
 - The roster and routine are **solvers, not model text**: no teacher double-booked, no class clash, fair duty split, unavailability honoured, and impossible demands are reported instead of hidden (tested).
+
+## Second-companion upgrade (gaps 1–12)
+
+| # | What now exists | Where |
+|---|---|---|
+| 1 | **Function-calling**: 15 tools (tasks, memory, calendar, mail draft, documents, NeverMind, GitHub), routed only when a message needs them; falls back to plain chat if the provider has no tools | `docs/tools.js` |
+| 2 | **Google Calendar + Gmail** (Drive tab → "Calendar + Gmail"): read events/mail metadata, create events, save **drafts**. No send scope exists | `docs/google.js` |
+| 3 | **Verification** of every reply: weekday↔date, arithmetic, percentages, marks totals, UDISE, leftover `[placeholders]`, personal numbers; one automatic repair pass | `docs/verify.js` |
+| 4 | **One memory view**: facts + notes de-duplicated, newer single-valued facts win, decayed facts retire | `docs/memory.js` |
+| 5 | **Token budget**: prompt sections are prioritised and fitted; old turns become a recap | `docs/budget.js` |
+| 6 | Streaming (earlier) | `docs/app.js` |
+| 7 | **"Hey Jenni"** wake word and optional **barge-in** (while the page is open; headphones for barge-in) | `docs/app.js` |
+| 8 | **Companion suggestions**: ready next step for due work, calendar heads-up, weekly rhythm, wins recap | `docs/proactive.js` |
+| 9 | **Autonomy setting** (ask / smart / auto), approval prompts for destructive and external actions, **taint rule** (after reading mail/web, every write asks), audit trail | `docs/tools.js`, Setup |
+| 10 | Recurring tasks (`har Monday …`), fact decay, `correct_memory`, `undo` | `docs/memory.js` |
+| 11 | **Encrypted Drive backup/restore** (PIN or passphrase), daily silent backup when connected | Drive tab |
+| 12 | **Self-test**: 16 rubric-scored requests with history, to see if a model/prompt change helped | Setup → Jenni ki jaanch |
+
+**Strengths-first**: Jenni's charter treats the owner as a senior peer (Principal, PGT Commerce, CBSE coordinator), never saves or surfaces self-criticism or shortcomings, words pending work as "ready to do", and celebrates finished work.
+
+Known limits: a static site has no push server (see Task reminders); Gemini voice input still depends on the browser's speech recognition; Google calls were verified against mocked responses, not a live account; cross-device sync is backup/restore, not live.

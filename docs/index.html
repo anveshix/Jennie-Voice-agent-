@@ -148,6 +148,7 @@
   </header>
 
   <main class="chat" id="chatScroll">
+    <div class="suggest" id="suggestStrip" hidden aria-label="Jenni ke suggestions"></div>
     <div class="chat__inner" id="messages" aria-live="polite" aria-relevant="additions"></div>
     <div class="chat__empty" id="chatEmpty">
       <div class="orb orb--sm" aria-hidden="true"><i></i><i></i><i></i></div>
@@ -395,6 +396,24 @@
     <input class="field" id="packQuery" placeholder="skills.sh par dhundo (e.g. pdf, testing)">
     <button class="btn" type="button" id="btnPackFind">Find skills</button>
     <p class="room-result" id="nmResult" role="status" aria-live="polite"></p>
+
+    <h3 class="sheet__sub">Jenni ka agent mode</h3>
+    <label class="label" for="autonomySel">Kitni azaadi</label>
+    <select class="field" id="autonomySel">
+      <option value="smart">Smart — phone ke andar ke kaam khud, bahar ke kaam (mail draft, calendar) puch kar</option>
+      <option value="ask">Sab kuch puch kar</option>
+      <option value="auto">Zyada khud (bahar ke kaam phir bhi puchegi)</option>
+    </select>
+    <label class="row"><input type="checkbox" id="wakeToggle"> <span>"Hey Jenni" bolke jagao (app khula ho tab)</span></label>
+    <label class="row"><input type="checkbox" id="bargeToggle"> <span>Beech me tok sakte ho (headphones best)</span></label>
+    <p class="field-hint">Kya kiya: Jenni ke har tool-kaam ka record neeche. Mail <strong>bhejna</strong> uske bas me hai hi nahi.</p>
+    <div id="actionLog" class="stack stack--tight"></div>
+
+    <h3 class="sheet__sub">Jenni ki jaanch (self-test)</h3>
+    <p class="field-hint">16 asli sawal, model ke jawab par nambar. Model ya prompt badalne ke baad chalao — behtar hui ya nahi, dikh jayega. (~16 requests)</p>
+    <div class="row row--wrap"><button class="btn btn--small" type="button" id="btnEval">Jaanch chalao</button></div>
+    <p class="room-result" id="evalResult" role="status"></p>
+    <div id="evalOut" class="stack stack--tight"></div>
 
     <h3 class="sheet__sub">2. Security</h3>
     <div class="secgrid">
