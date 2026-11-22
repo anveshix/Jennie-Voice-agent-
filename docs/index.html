@@ -319,6 +319,8 @@
     <h3 class="sheet__sub">Memory (Jenni ko kya yaad hai)</h3>
     <div id="memoryList"></div>
     <input class="field" id="memInput" maxlength="220" placeholder="note, ya  todo: SA1 report Monday">
+    <label class="row"><input type="checkbox" id="remindToggle"> <span>Task reminders (notification)</span></label>
+    <p class="room-result" id="remindInfo" role="status"></p>
     <div class="row row--wrap">
       <button class="btn btn--primary" type="button" id="btnMemAdd">Add</button>
       <button class="btn" type="button" id="btnMemExport">Export</button>
@@ -480,6 +482,7 @@
 <script src="./docs.js"></script>
 <script src="./github.js"></script>
 <script src="./brain.js"></script>
+<script src="./remind-store.js"></script>
 <script src="./connectors.js"></script>
 <script src="./app.js"></script>
 </body>

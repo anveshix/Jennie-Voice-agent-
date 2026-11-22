@@ -325,3 +325,10 @@ Skills (official letters, lesson plans, result diagnostics, planner, commerce tu
 With a PIN set, **chat, drafts and memory** are stored only as AES-256-GCM blobs (`*_v1_enc`), under a key derived from the PIN (PBKDF2-SHA256, 210k, own salt) that lives in memory only while unlocked. Locking (manual, idle, tab hide) clears them from memory and the page; nothing is written while locked. Setting, changing or removing the PIN re-encrypts/migrates existing data. Unlocking no longer writes the API key back to storage in plaintext. Forget the PIN and the data is unrecoverable — use Memory → Export for a backup first.
 
 Phone use (GitHub Pages app) has no server, so `JENNI_ACCESS_TOKEN` is not needed there; it only matters if you deploy the Node server. For the NeverMind bridge from the phone, set `NEVERMIND_API_TOKEN`.
+
+## Task reminders
+
+Setup → Memory → **Task reminders**. Overdue/today tasks trigger a notification (not before 08:00 IST), once per state.
+- **App open or in background:** checked every minute.
+- **App closed:** Android Chrome with Jenni installed to the Home screen uses Periodic Background Sync (about 1–2 checks/day; Chrome decides the exact time). iOS Safari and uninstalled tabs do not support this — the daily briefing on opening is the fallback. A static site has no push server, so there are no exact-time alarms.
+- **Privacy:** the service worker cannot read encrypted data, so a small index (due dates) is kept in IndexedDB. With a PIN set it holds **no titles** — notifications say only "1 overdue, 1 aaj due". Without a PIN they include titles. Panic wipe clears it.

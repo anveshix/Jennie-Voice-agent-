@@ -239,6 +239,17 @@
     }).join('\n') : '- (nothing saved yet)';
   }
 
+  /** Notification text for due/overdue tasks, or null. Titles only when allowed (no PIN). */
+  function reminderText(items, now, withTitles) {
+    const live = (items || []).filter((t) => t && t.due && ['overdue', 'today'].includes(taskState(t, now)));
+    if (!live.length) return null;
+    const overdue = live.filter((t) => taskState(t, now) === 'overdue').length;
+    const title = live.length === 1 ? 'Jenni: 1 task pending' : 'Jenni: ' + live.length + ' tasks pending';
+    const counts = (overdue ? overdue + ' overdue, ' : '') + (live.length - overdue) + ' aaj due';
+    const body = withTitles ? live.map((t) => '• ' + String(t.text || '').slice(0, 60)).slice(0, 4).join('\n') : counts + '. Khol ke dekho.';
+    return { title, body, count: live.length, key: iso(istDay(now)) + ':' + live.length };
+  }
+
   /** Local daily briefing — no model call, no network. '' when nothing to say. */
   function briefing(list, now) {
     const tasks = (list || []).filter((m) => m.cat === 'task');
@@ -271,5 +282,5 @@
     ].filter(Boolean).join('\n');
   }
 
-  return { OWNER, SKILLS, CATS, MAX_MEMORIES, addMemory, removeMemory, parseDueDate, taskState, rankMemories, briefing, looksSecret, extractOps, applyOps, userCommand, selectSkills, buildContext, memoryBlock, timeBlock };
+  return { OWNER, SKILLS, CATS, MAX_MEMORIES, addMemory, removeMemory, parseDueDate, taskState, rankMemories, briefing, reminderText, looksSecret, extractOps, applyOps, userCommand, selectSkills, buildContext, memoryBlock, timeBlock };
 });

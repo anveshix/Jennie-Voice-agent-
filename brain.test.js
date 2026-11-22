@@ -45,3 +45,15 @@ test('audit: relevant memory beats recent memory', () => {
   m = b.addMemory(m, 'principal prefers bilingual circulars', 'preference', 0);
   assert.ok(b.rankMemories(m, 'draft circular bilingual').slice(0, 3).some((x) => /bilingual/.test(x.text)));
 });
+
+test('reminders: only overdue/today, titles only when allowed, stable key', () => {
+  const now = Date.parse('2026-11-22T05:00:00Z');   // 10:30 IST, 22 Nov
+  const items = [{ due: '2026-11-21', text: 'SA1 report' }, { due: '2026-11-22', text: 'fees notice' }, { due: '2026-11-30', text: 'later' }, { due: '', text: 'nodate' }];
+  const withT = b.reminderText(items, now, true);
+  assert.equal(withT.count, 2);
+  assert.match(withT.body, /SA1 report/);
+  const noT = b.reminderText(items, now, false);
+  assert.ok(!/SA1|fees/.test(noT.body) && /1 overdue, 1 aaj due/.test(noT.body));
+  assert.equal(b.reminderText([{ due: '2026-12-30', text: 'x' }], now, true), null);
+  assert.equal(withT.key, b.reminderText(items, now, true).key);
+});

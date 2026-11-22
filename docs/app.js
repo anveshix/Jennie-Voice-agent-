@@ -17,6 +17,7 @@
     nm: 'jenni_nm_v1',         // NeverMind url + token
     nmTeam: 'jenni_nm_team_v1',
     packs: 'jenni_packs_v1',   // installed SKILL.md packs
+    remind: 'jenni_remind_on', // reminders enabled ('1')
     voiceOn: 'jenni_voice_on', // master voice switch ('0' = off)
     memory: 'jenni_memory_v1', // long-term memory (local only, wiped by panic)
     lock: 'jenni_lock_v1',     // PIN settings + config
@@ -435,7 +436,7 @@
   }
 
   function loadMemory() { return BRAIN ? state.memory : []; }
-  function saveMemory(list) { state.memory = list; persist('memory'); paintMemory(); }
+  function saveMemory(list) { state.memory = list; persist('memory'); paintMemory(); syncReminders(); }
 
   /* ── encrypted storage for chat, drafts and memory ─────────────────────────
      With a PIN set, these live only as AES-GCM blobs (`<key>_enc`). While the
@@ -453,6 +454,49 @@
       .catch(() => { toast('Data encrypt/save nahi ho paya', true); return false; });
     return writeChain[name];
   }
+  /* ── reminders ─────────────────────────────────────────────────────────────
+     The service worker cannot read encrypted storage, so a minimal index goes to
+     IndexedDB: due dates only when a PIN is set, plus titles when it is not. */
+  const RSTORE = window.JENNI_REMIND_STORE;
+  const remindOn = () => { try { return localStorage.getItem(LS.remind) === '1'; } catch (e) { return false; } };
+  async function syncReminders() {
+    if (!RSTORE || !BRAIN || !window.indexedDB || security.enabled && !security.dataKey) return;   // locked: keep the last index
+    try {
+      const prev = (await RSTORE.get('index')) || {};
+      const titles = !security.enabled;
+      const items = state.memory.filter((m) => m.cat === 'task' && m.due).map((m) => ({ due: m.due, text: titles ? m.text : '' }));
+      await RSTORE.set('index', { on: remindOn(), titles, items, lastKey: prev.lastKey || '' });
+    } catch (e) { /* IndexedDB blocked (private mode): in-page reminders still work */ }
+  }
+  async function remindTick() {
+    if (!remindOn() || !('Notification' in window) || Notification.permission !== 'granted') return;
+    if (security.enabled && !security.dataKey) return;
+    const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: 'numeric', hour12: false }).format(new Date())) % 24;
+    if (hour < 8) return;
+    await syncReminders();
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.ready.catch(() => null);
+    if (reg && reg.active) reg.active.postMessage('remind-now');
+  }
+  async function setReminders(on) {
+    const info = $('remindInfo');
+    if (!on) { localStorage.setItem(LS.remind, '0'); await syncReminders(); info.textContent = 'Reminders band.'; return false; }
+    if (!('Notification' in window)) { info.textContent = 'Ye browser notifications support nahi karta.'; return false; }
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { info.textContent = 'Notification permission nahi mili — browser settings me allow karo.'; return false; }
+    localStorage.setItem(LS.remind, '1');
+    await syncReminders();
+    let bg = false;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg.periodicSync) { await reg.periodicSync.register('jenni-remind', { minInterval: 12 * 60 * 60 * 1000 }); bg = true; }
+    } catch (e) { /* not installed as an app, or not supported */ }
+    info.textContent = bg
+      ? 'ON — app band hone par bhi din me 1-2 baar check hoga (Android me app Home screen par install ho). ' + (security.enabled ? 'PIN ki wajah se notification me task ka naam nahi, sirf count aayega.' : '')
+      : 'ON — app khula ya background me ho tab reminder aayega. Band app ke liye Chrome me "Add to Home screen" karo.';
+    remindTick();
+    return true;
+  }
+
   const persistAll = () => Promise.all(['chat', 'drafts', 'memory'].map(persist));
 
   async function initDataKey(pin, fresh) {
@@ -1869,6 +1913,7 @@
     await initDataKey(pin);
     await hydrate();
     paintMemory();
+    syncReminders();
     $('lockScreen').hidden = true;
     $('gate').hidden = true;
     $('app').hidden = false;
@@ -1959,6 +2004,7 @@
   /* ── panic ─────────────────────────────────────────────────────────────── */
 
   function panicWipe() {
+    try { if (RSTORE && window.indexedDB) RSTORE.clear(); } catch (e) { /* ignore */ }
     const keys = new Set(ALL_KEYS);
     try {
       Object.keys(localStorage).forEach((key) => {
@@ -2429,6 +2475,12 @@
         } catch (error) { say('skills.sh search nahi ho paya: ' + error.message, 'error'); }
       });
       paintPacks();
+    }
+    if ($('remindToggle')) {
+      $('remindToggle').checked = remindOn() && 'Notification' in window && Notification.permission === 'granted';
+      $('remindToggle').addEventListener('change', async (ev) => { ev.target.checked = await setReminders(ev.target.checked); });
+      setInterval(remindTick, 60000);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') remindTick(); });
     }
     if ($('btnMemAdd') && BRAIN) {
       $('btnMemAdd').addEventListener('click', () => {
