@@ -180,6 +180,13 @@ async function boot(options = {}) {
   window.eval(fs.readFileSync(path.join(ROOT, 'connectors.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'agent.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'office.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'evals.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'proactive.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'google.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'tools.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'verify.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'budget.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'memory.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8'));
   await wait(180);
 
@@ -1089,7 +1096,7 @@ function submit(window, text) {
   b = await boot({ script: [{ sse: ['Haan yaar, ', 'main kar deti hoon ye kaam. ', 'Pehle notice ', 'ka draft banate hain.\n', '[[remember: likes drafts]]'] }] });
   b.$('btnVoice').click();
   await wait(90);
-  b.rec.last.say('notice banao');
+  b.rec.last.say('kal ka din kaisa rahega');
   await wait(900);
   ok(b.tts.spoken.length >= 2, 'a streamed answer is spoken sentence by sentence', String(b.tts.spoken.length));
   ok(b.tts.spoken.every((u) => !u.text.includes('[[') && !u.text.includes('likes drafts')), 'memory tags are never spoken');

@@ -19,6 +19,13 @@
     packs: 'jenni_packs_v1',   // installed SKILL.md packs
     remind: 'jenni_remind_on', // reminders enabled ('1')
     voiceOn: 'jenni_voice_on', // master voice switch ('0' = off)
+    wins: 'jenni_wins_v1',     // completed tasks (strengths log)
+    activity: 'jenni_activity_v1', // weekly rhythm of the owner's work
+    summary: 'jenni_summary_v1',   // rolling recap of trimmed chat turns
+    actions: 'jenni_actions_v1',   // audit trail of what Jenni did
+    evals: 'jenni_evals_v1',       // self-test history
+    autonomy: 'jenni_autonomy_v1', // ask | smart | auto
+    backup: 'jenni_backup_v1',     // last Drive backup info
     school: 'jenni_school_v1', // letterhead profile for the Office desk
     notes: 'jenni_notes_v1',   // owner notes + tasks (brain.js)
     dk: 'jenni_dk_v1',         // salt for the data key (not secret)
@@ -53,12 +60,19 @@
   const GH = window.JENNI_GITHUB || {};
   const BRAIN = window.JENNI_BRAIN;
   const CN = window.JENNI_CONNECT;
+  const MEM = window.JENNI_MEM;
+  const BUDGET = window.JENNI_BUDGET;
+  const VERIFY = window.JENNI_VERIFY;
+  const TOOLS = window.JENNI_TOOLS;
+  const GOOGLE = window.JENNI_GOOGLE;
+  const PRO = window.JENNI_PROACTIVE;
+  const EVALS = window.JENNI_EVALS;
   const AGENT = window.JENNI_AGENT || {};
 
   /* Long-term memory and learned skills. Both are plain localStorage data, so
      they show up in the UI, survive reloads and vanish on "Erase everything".
      Declared after AGENT, which they depend on. */
-  const SECURE_KEYS = [LS.chat, LS.drafts, LS.notes, LS.school, LS.memory, LS.skills, LS.episodes, LS.insights];
+  const SECURE_KEYS = [LS.chat, LS.drafts, LS.notes, LS.school, LS.wins, LS.activity, LS.summary, LS.actions, LS.evals, LS.memory, LS.skills, LS.episodes, LS.insights];
   const vault = new Map();          // decrypted JSON strings while unlocked
   const vaultQueue = {};            // per-key write chain (keeps writes in order)
   const secureStore = {
@@ -81,6 +95,8 @@
       if (SECURE_KEYS.includes(key)) { localStorage.removeItem(key + '_enc'); vault.delete(key); }
     }
   };
+  const secGet = (key, fallback) => { try { const raw = secureStore.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch (e) { return fallback; } };
+  const secSet = (key, value) => { try { secureStore.setItem(key, JSON.stringify(value)); } catch (e) { /* storage full */ } };
   const memory = AGENT.createMemory ? AGENT.createMemory(secureStore) : null;
   const skills = AGENT.createSkills ? AGENT.createSkills(secureStore) : null;
   const journal = AGENT.createJournal ? AGENT.createJournal(secureStore) : null;
@@ -271,6 +287,7 @@
     };
 
     if (options.onDelta) body.stream = true;
+    if (options.tools) { body.tools = options.tools; body.tool_choice = 'auto'; }
 
     if (isGemini(cfg)) {
       const effort = THINKING_FLOOR[model] || 'minimal';
@@ -388,6 +405,7 @@
       }
 
       const choice = payload && payload.choices && payload.choices[0];
+      if (options.raw && choice && choice.message) { app.lastLatency = Date.now() - started; return choice.message; }
       const content = choice && choice.message && choice.message.content;
       const finish = choice && choice.finish_reason;
 
@@ -545,7 +563,7 @@
   }
 
   function loadNotes() { return BRAIN ? state.notes : []; }
-  function saveNotes(list) { state.notes = list; persist('notes'); paintNotes(); syncReminders(); }
+  function saveNotes(list) { state.notes = normalizeTasks(list); persist('notes'); paintNotes(); syncReminders(); if (typeof paintSuggestions === 'function') paintSuggestions(); }
 
   /* ── encrypted storage ────────────────────────────────────────────────────
      With a PIN set, chat, drafts, notes AND the agent's facts, playbooks and
@@ -657,27 +675,44 @@
     await flushVault();
   }
 
-  function personaPrompt(userText) {
-    return [
-      PERSONA.lines.join(' '),
-      'Aaj: ' + new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.',
-      'Never ask for or repeat API keys, passwords or personal identifiers.',
-      BRAIN ? BRAIN.buildContext({ text: userText, memories: loadNotes(), packs: CN ? CN.matchPacks(userText, loadPacks()) : [], team: readJson(LS.nmTeam, []) }) : ''
-    ].join(' ');
+  /* The system prompt is assembled from prioritised sections and fitted to a
+     token budget, so a long profile can never crowd out the conversation. */
+  const PROMPT_BUDGET = 3300;       // system prompt tokens
+  const HISTORY_BUDGET = 1500;      // recent turns
+  function unifiedMemoryLines(userText) {
+    if (!MEM) return null;
+    return MEM.unify({ facts: memory ? memory.all() : [], notes: state.notes, text: userText, now: Date.now(), limit: 8 }).map((i) => i.text);
   }
 
-  const SYSTEM_PROMPT = personaPrompt();
+  function promptSections(userText) {
+    const persona = [
+      PERSONA.lines.join(' '),
+      'Aaj: ' + new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.',
+      'Never ask for or repeat API keys, passwords or personal identifiers.'
+    ].join(' ');
+    const sections = [{ id: 'persona', priority: 1, text: persona }];
+    if (BRAIN) {
+      sections.push(...BRAIN.contextSections({
+        text: userText, memories: loadNotes(), memoryLines: unifiedMemoryLines(userText),
+        packs: CN ? CN.matchPacks(userText, loadPacks()) : [], team: readJson(LS.nmTeam, [])
+      }));
+    }
+    const recap = secGet(LS.summary, '');
+    if (recap) sections.push({ id: 'recap', priority: 5, text: 'EARLIER IN THIS CHAT (recap): ' + recap });
+    const extra = agentContextFor(userText).trim();
+    if (extra) sections.push({ id: 'agent', priority: 6, text: extra });
+    return sections;
+  }
+
+  function personaPrompt(userText) {
+    const sections = promptSections(userText);
+    return BUDGET ? BUDGET.fit(sections, PROMPT_BUDGET).text : sections.map((x) => x.text).join('\n');
+  }
+
 
   /** The facts and the playbook that matter for *this* message. */
   function agentContextFor(userText) {
     const parts = [];
-    if (memory) {
-      const facts = memory.recall(userText, 6);
-      if (facts.length) {
-        parts.push('User ke baare me yaad hai (sirf zaroorat par use karo, list mat do):\n'
-          + facts.map((fact) => '- ' + fact.text).join('\n'));
-      }
-    }
     if (skills) {
       const matched = skills.match(userText);
       if (matched.length) {
@@ -699,13 +734,215 @@
     return parts.length ? '\n\n' + parts.join('\n\n') : '';
   }
 
-  function conversationForApi(userText) {
-    // Recent turns only: older messages make the first token slower and rarely help.
-    const history = state.chat.slice(-8)
-      .filter((m) => m.text && !m.pending && !String(m.text).startsWith('Maaf karo'))
+  function conversationForApi(userText, options = {}) {
+    let history = options.noHistory ? [] : state.chat
+      .filter((m) => m.text && !m.pending && !m.failed && !String(m.text).startsWith('Maaf karo'))
       .map((m) => ({ role: m.role === 'me' ? 'user' : 'assistant', content: m.text }));
-    const system = personaPrompt() + agentContextFor(userText);
-    return [{ role: 'system', content: system }, ...history, { role: 'user', content: userText }];
+    if (BUDGET && history.length) {
+      // newest turns that fit; what falls off is condensed into a recap instead of vanishing
+      const trimmed = BUDGET.trimHistory(history, HISTORY_BUDGET, 2);
+      if (trimmed.dropped.length) {
+        const old = secGet(LS.summary, '');
+        const fresh = BUDGET.summarize(trimmed.dropped, old);
+        if (fresh !== old) secSet(LS.summary, fresh);
+      }
+      history = trimmed.kept;
+    } else history = history.slice(-8);
+    return [{ role: 'system', content: personaPrompt(userText) }, ...history, { role: 'user', content: userText }];
+  }
+
+
+  /* ══════════════════════════════════════════════════════ AGENT: tools, hygiene */
+
+  const WD_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const todayIso = () => (PRO ? PRO.istDay(now()) : new Date().toISOString().slice(0, 10));
+
+  /* "har Monday result report" → a recurring task with a real due date. */
+  function normalizeTasks(list) {
+    if (!MEM || !BRAIN) return list;
+    return list.map((n) => {
+      if (n.cat !== 'task' || n.rc) return n;
+      const r = MEM.parseRepeat(n.text);
+      const out = Object.assign({}, n, { rc: 1 });
+      if (r.repeat) {
+        out.repeat = r.repeat;
+        if (Number.isInteger(r.weekday)) out.weekday = r.weekday;
+        const cleaned = MEM.cleanRepeatWords(n.text);
+        if (cleaned.length >= 3) out.text = cleaned;
+        if (!out.due) out.due = r.repeat === 'weekly' && Number.isInteger(r.weekday) ? BRAIN.parseDueDate(WD_NAMES[r.weekday]) : BRAIN.parseDueDate('aaj');
+      }
+      return out;
+    });
+  }
+
+  /* One-step undo for anything destructive Jenni (or the owner) does to memory. */
+  const undoStack = [];
+  function snapshot() {
+    undoStack.push({ notes: JSON.parse(JSON.stringify(state.notes)), facts: memory ? memory.all() : [] });
+    if (undoStack.length > 5) undoStack.shift();
+  }
+  function undoLast() {
+    const snap = undoStack.pop();
+    if (!snap) return false;
+    saveNotes(snap.notes);
+    secureStore.setItem(LS.memory, JSON.stringify(snap.facts));
+    paintMemory();
+    return true;
+  }
+
+  function completeNote(query) {
+    if (!MEM) return null;
+    const r = MEM.completeTask(state.notes, query, todayIso(), now());
+    if (!r.win) return null;
+    snapshot();
+    saveNotes(r.notes);
+    secSet(LS.wins, [r.win].concat(secGet(LS.wins, [])).slice(0, 200));
+    return r;
+  }
+
+  function auditPush(entry) { secSet(LS.actions, [entry].concat(secGet(LS.actions, [])).slice(0, 100)); }
+
+  function askApproval({ name, args, tainted }) {
+    const what = {
+      gmail_draft: `Gmail DRAFT banana — To: ${args.to}, Subject: ${args.subject}`,
+      calendar_create_event: `Calendar me event: "${args.title}" @ ${args.start}`,
+      delegate_nevermind: `NeverMind agents ko kaam dena: ${String(args.request).slice(0, 120)}`,
+      forget: `Memory se hataana: "${args.text}"`,
+      correct_memory: `Memory badalna: "${args.wrong}" → "${args.right}"`
+    }[name] || `${name} (${JSON.stringify(args).slice(0, 100)})`;
+    return Promise.resolve(window.confirm('Jenni ye karna chahti hai:\n• ' + what + (tainted ? '\n\n(Dhyan: ye mail/web/calendar se padhe content ke baad aaya hai — pehchaan lo ki ye aapki hi marzi hai.)' : '') + '\n\nAllow?'));
+  }
+
+  function googleReady() {
+    return Boolean(GOOGLE && state.drive && state.drive.extended && state.driveToken && state.driveToken.expires > now());
+  }
+  function googleClient() {
+    return GOOGLE.createGoogle({ getToken: async () => { if (!googleReady()) throw new Error('Google connect nahi hai — Drive tab me Connect dabao.'); return state.driveToken.token; } });
+  }
+
+  const taskLine = (t) => `${t.text}${t.due ? ' (due ' + t.due + ')' : ''}${t.repeat ? ' [' + t.repeat + ']' : ''}`;
+  const toolHandlers = {
+    async list_tasks({ filter }) {
+      const tasks = state.notes.filter((n) => n.cat === 'task');
+      const keep = { all: () => true, overdue: (t) => BRAIN.taskState(t) === 'overdue', today: (t) => BRAIN.taskState(t) === 'today', week: (t) => ['overdue', 'today', 'soon'].includes(BRAIN.taskState(t)) || (t.due && Date.parse(t.due) - now() < 7 * 86400000) }[filter || 'all'] || (() => true);
+      const list = tasks.filter(keep);
+      return list.length ? list.map(taskLine).join('\n') : 'No matching tasks.';
+    },
+    async today_overview() {
+      const parts = [];
+      const tasks = state.notes.filter((n) => n.cat === 'task' && ['overdue', 'today', 'soon'].includes(BRAIN.taskState(n)));
+      parts.push(tasks.length ? 'Tasks:\n' + tasks.map(taskLine).join('\n') : 'Tasks: nothing due soon.');
+      if (googleReady()) {
+        try { const ev = await googleClient().events(1, now()); parts.push(ev.length ? 'Calendar:\n' + ev.map((e) => `${e.start.slice(11, 16) || 'all-day'} ${e.title}`).join('\n') : 'Calendar: free.'); }
+        catch (e) { parts.push('Calendar unavailable: ' + e.message); }
+      }
+      return parts.join('\n');
+    },
+    async add_task({ title, due, repeat }) {
+      const rep = MEM.parseRepeat(title + ' ' + (repeat || ''));
+      let list = BRAIN.addMemory(state.notes, MEM.cleanRepeatWords(title) || title, 'task', now(), BRAIN.parseDueDate(due || title, now()));
+      if (list === state.notes) return { error: 'Not saved (duplicate, or it looks like private data).' };
+      const added = list[list.length - 1];
+      if (repeat && !rep.repeat) added.repeat = repeat; else if (rep.repeat) { added.repeat = rep.repeat; if (Number.isInteger(rep.weekday)) added.weekday = rep.weekday; }
+      added.rc = 1;
+      if (added.repeat && !added.due) added.due = todayIso();
+      saveNotes(list);
+      return `Saved: ${taskLine(added)}`;
+    },
+    async complete_task({ title }) {
+      const r = completeNote(title);
+      return r ? (r.rolled ? `Done — next one scheduled.` : 'Done — task cleared.') : { error: 'No matching task.' };
+    },
+    async remember({ fact }) {
+      if (MEM.isShortcoming(fact)) return { error: 'Not stored: Jenni keeps what helps, not self-criticism.' };
+      const list = BRAIN.addMemory(state.notes, fact, null, now());
+      if (list === state.notes) return { error: 'Not saved (duplicate or private data).' };
+      saveNotes(list);
+      return 'Remembered.';
+    },
+    async search_memory({ query }) {
+      const found = MEM.unify({ facts: memory ? memory.all() : [], notes: state.notes, text: query, now: now(), limit: 6 }).map((i) => '- ' + i.text);
+      const tasks = state.notes.filter((n) => n.cat === 'task' && MEM.overlap(query, n.text) > 0.3).map((t) => '- [task] ' + taskLine(t));
+      return found.concat(tasks).join('\n') || 'Nothing remembered about that.';
+    },
+    async forget({ text }) {
+      snapshot();
+      const before = state.notes.length + (memory ? memory.all().length : 0);
+      saveNotes(BRAIN.removeMemory(state.notes, text));
+      if (memory) memory.all().filter((f) => MEM.overlap(text, f.text) >= 0.6).forEach((f) => memory.forget(f.id));
+      const after = state.notes.length + (memory ? memory.all().length : 0);
+      return before === after ? { error: 'Nothing matched.' } : `Removed ${before - after} item(s). (Say "undo" to bring it back.)`;
+    },
+    async correct_memory({ wrong, right }) {
+      snapshot();
+      const r = MEM.correct({ facts: memory ? memory.all() : [], notes: state.notes }, wrong, right);
+      secureStore.setItem(LS.memory, JSON.stringify(r.facts));
+      let notes = r.notes;
+      if (r.add && !MEM.isShortcoming(r.add)) notes = BRAIN.addMemory(notes, r.add, null, now());
+      saveNotes(notes); paintMemory();
+      return 'Corrected. (Say "undo" to revert.)';
+    },
+    async make_document({ type, fields }) {
+      const values = Object.assign({ lang: 'hi' }, fields || {});
+      const built = officeMake(type, values);
+      const issues = VERIFY.check(built.text, { document: true, udise: BRAIN.OWNER.udise }).issues.map((i) => i.msg);
+      saveDraft(built.text, true);
+      return { saved_to_drafts: built.title, issues, preview: built.text.slice(0, 500) };
+    },
+    async calendar_events({ days }) { const ev = await googleClient().events(days || 1, now()); return ev.length ? ev.map((e) => `${e.start} — ${e.title}${e.where ? ' @ ' + e.where : ''}`).join('\n') : 'No events.'; },
+    async gmail_search({ query, max }) { const m = await googleClient().searchMail(query, max || 5); return m.length ? m.map((x) => `From: ${x.from} | ${x.subject} | ${x.date}\n${x.snippet}`).join('\n---\n') : 'No messages.'; },
+    async gmail_draft(a) { await googleClient().createDraft(a); return 'Draft saved in Gmail (not sent).'; },
+    async calendar_create_event(a) { const r = await googleClient().createEvent(a); return 'Event created.' + (r.link ? ' ' + r.link : ''); },
+    async delegate_nevermind({ request }) {
+      const nm = nmClient(); if (!nm) return { error: 'NeverMind not connected.' };
+      const r = await nm.delegate(request);
+      return `${r.status}: ${r.summary}\n` + r.files.map((f) => `${f.name}: ${f.url}`).join('\n');
+    },
+    async read_github_repo({ repo }) { return (await GH.readRepo(repo)).apiBlock; }
+  };
+
+  function getToolbox() {
+    return TOOLS.createToolbox({
+      handlers: toolHandlers, approve: askApproval, audit: auditPush,
+      autonomy: () => localStorage.getItem(LS.autonomy) || 'smart',
+      available: (n) => (n === 'google' ? googleReady() : n === 'nevermind' ? Boolean(nmClient()) : true),
+      now
+    });
+  }
+
+  const looksLikeToolUnsupported = (e) => /tool|function|tool_choice/i.test(String(e && e.message)) && !/key|quota|limit/i.test(String(e && e.message));
+
+  async function runToolTurn(clean, repoContext, turn) {
+    const out = await TOOLS.runLoop({
+      chat: (msgs, tools) => askProvider(msgs, Object.assign({ raw: true, maxTokens: 700 }, tools ? { tools } : {})),
+      messages: conversationForApi(clean + repoContext),
+      toolbox: getToolbox(),
+      turn
+    });
+    return out.text;
+  }
+
+  /* Deterministic check of what she wrote; one repair pass when it is wrong. */
+  async function verifyReply(reply, clean, repoContext, canRepair) {
+    if (!VERIFY || !reply) return { reply, checks: null };
+    const docLike = Boolean(DOCS.looksLikeDocumentText(reply) || DOCS.looksLikeDocRequest(clean));
+    const ctx = { udise: BRAIN.OWNER.udise, document: docLike };
+    let res = VERIFY.check(reply, ctx);
+    if (!res.ok && canRepair) {
+      try {
+        setStatus('busy');
+        const fixed = await askProvider(
+          conversationForApi(clean + repoContext).concat([{ role: 'assistant', content: reply }, { role: 'user', content: VERIFY.repairPrompt(res.issues) }]),
+          { maxTokens: 900, temperature: 0.2 }
+        );
+        const again = VERIFY.check(fixed, ctx);
+        const errs = (r) => r.issues.filter((i) => i.level === 'error').length;
+        if (fixed && errs(again) < errs(res)) { reply = fixed; res = again; }
+      } catch (e) { /* keep the original; the warning below still shows */ }
+    }
+    const notes = res.issues.map((i) => (i.level === 'error' ? '⚠ ' : '• ') + i.msg);
+    if (!notes.length && !docLike) return { reply, checks: null };
+    return { reply, checks: { ok: res.ok, notes: notes.slice(0, 4) } };
   }
 
   /* ══════════════════════════════════════════════════════════════ CHAT UI */
@@ -740,6 +977,13 @@
       bubble.innerHTML = renderMd(message.text);
     }
     row.appendChild(bubble);
+
+    if (message.checks && !message.pending) {
+      const strip = document.createElement('div');
+      strip.className = 'msg__checks' + (message.checks.ok ? ' is-ok' : ' is-warn');
+      strip.textContent = message.checks.notes.length ? message.checks.notes.join('  ') : '✓ Date, hisaab aur format check ho gaya';
+      row.appendChild(strip);
+    }
 
     if (message.role === 'jenni' && !message.pending && message.text) {
       const foot = document.createElement('div');
@@ -915,10 +1159,16 @@
       return;
     }
 
+    if (/^(undo|wapas karo|pichla badlav wapas|undo that)\.?$/i.test(clean)) {
+      toast(undoLast() ? 'Pichla badlav wapas kar diya' : 'Wapas karne ko kuch nahi', false);
+      return;
+    }
     if (BRAIN) {
       const cmd = BRAIN.userCommand(clean);
-      if (cmd) { saveNotes(BRAIN.applyOps(loadNotes(), [cmd])); toast('Yaad rakh liya', false); }
+      if (cmd && MEM && MEM.isShortcoming(cmd.body)) toast('Ye main yaad nahi rakhungi — hum aapki taakat par kaam karte hain', false);
+      else if (cmd) { snapshot(); saveNotes(BRAIN.applyOps(loadNotes(), [cmd])); toast('Yaad rakh liya', false); }
     }
+    if (PRO) secSet(LS.activity, PRO.recordIntent(secGet(LS.activity, {}), PRO.intentOf(clean), now()));
 
     state.busy = true;
     $('input').value = '';
@@ -950,7 +1200,7 @@
 
       // Learn durable facts before asking — "mera naam Aarav hai" must survive
       // the next reload, not just this conversation.
-      if (memory) {
+      if (memory && !(MEM && MEM.isShortcoming(clean))) {
         const learned = memory.observe(clean, 'chat');
         if (learned.length) memory.compact();
       }
@@ -962,8 +1212,22 @@
           delegated = await nm.delegate(CN.stripPrefix(clean));
         } catch (error) { toast('NeverMind: ' + error.message, true); }   // fall back to plain chat
       }
+      const turn = { tainted: Boolean(repoContext) };
       if (delegated || repoContext) untrusted = true;
-      if (delegated) {
+      let usedTools = false;
+      if (!delegated && TOOLS && !state.noTools && TOOLS.needsTools(clean)) {
+        try {
+          reply = await runToolTurn(clean, repoContext, turn);
+          usedTools = Boolean(reply);
+          if (turn.tainted) untrusted = true;
+        } catch (error) {
+          if (looksLikeToolUnsupported(error)) state.noTools = true;        // this provider/model has no function calling
+          else throw error;
+        }
+      }
+      if (usedTools) {
+        /* answered through tools */
+      } else if (delegated) {
         reply = ['NeverMind agents (' + delegated.status + '):', delegated.summary]
           .concat(delegated.files.map((f) => `[${f.name}](${f.url})`)).join('\n\n');
       } else {
@@ -990,7 +1254,13 @@
       if (BRAIN) {
         const parsed = BRAIN.extractOps(reply);
         reply = parsed.text;
-        if (parsed.ops.length && !untrusted) { saveNotes(BRAIN.applyOps(loadNotes(), parsed.ops)); toast('Memory update ho gayi', false); }
+        const ops = MEM ? parsed.ops.filter((o) => !MEM.isShortcoming(o.body)) : parsed.ops;
+        if (ops.length && !untrusted) { snapshot(); saveNotes(BRAIN.applyOps(loadNotes(), ops)); toast('Memory update ho gayi', false); }
+      }
+      if (!delegated) {
+        const v = await verifyReply(reply, clean, repoContext, !voice.mode && !(speaker && speaker.spoken()));
+        reply = v.reply;
+        if (v.checks) pending.checks = v.checks;
       }
       /* A useful step-by-step answer becomes a reusable playbook, so the next
          similar question starts from experience instead of zero (Hermes-style). */
@@ -1535,13 +1805,13 @@
 
   /* ══════════════════════════════════════════════════════════════ DRAFTS */
 
-  function saveDraft(text) {
+  function saveDraft(text, quiet) {
     const title = String(text).split('\n')[0].replace(/[#*_`>]/g, '').trim().slice(0, 60) || 'Draft';
     state.drafts.unshift({ id: String(now()), title, text, at: new Date().toISOString() });
     state.drafts = state.drafts.slice(0, 200);
     persist('drafts');
     paintDrafts();
-    toast('Draft save ho gaya');
+    if (!quiet) toast('Draft save ho gaya');
   }
 
   /* ── Office desk ───────────────────────────────────────────────────────── */
@@ -1761,7 +2031,7 @@
       setResult('driveResult', 'Client ID .apps.googleusercontent.com par khatam hota hai.', 'error');
       return;
     }
-    state.drive = { clientId: value };
+    state.drive = Object.assign({}, state.drive, { clientId: value });
     writeJson(LS.drive, state.drive);
     paintDrive();
     setResult('driveResult', 'Client ID save ho gaya. Ab Connect Google dabao.', 'ok');
@@ -1774,10 +2044,10 @@
         try {
           const client = window.google.accounts.oauth2.initTokenClient({
             client_id: state.drive.clientId,
-            scope: DRIVE_SCOPE,
+            scope: GOOGLE ? GOOGLE.scopeString(Boolean(state.drive.extended)) : DRIVE_SCOPE,
             callback: (response) => {
               if (response && response.access_token) {
-                state.driveToken = { token: response.access_token, expires: now() + (Number(response.expires_in || 3600) - 60) * 1000 };
+                state.driveToken = { token: response.access_token, expires: now() + (Number(response.expires_in || 3600) - 60) * 1000, scoped: Boolean(state.drive.extended) };
                 writeJson(LS.driveToken, state.driveToken);
                 resolve(state.driveToken.token);
               } else {
@@ -1786,7 +2056,7 @@
             },
             error_callback: (error) => reject(new Error((error && error.message) || 'Google connect nahi hua.'))
           });
-          client.requestAccessToken({ prompt: state.driveToken ? '' : 'consent' });
+          client.requestAccessToken({ prompt: state.driveToken && state.driveToken.scoped === Boolean(state.drive.extended) ? '' : 'consent' });
         } catch (error) {
           reject(error);
         }
@@ -2096,10 +2366,9 @@
 
   /* ══════════════════════════════════════════════════════════════ EXPORT */
 
-  function exportData() {
-    /* Everything that took time to build goes in the backup — the key never
-       does. Memory, learned playbooks and the journal are the expensive part. */
-    const data = {
+  function collectBackup() {
+    /* Everything that took time to build goes in the backup — the key never does. */
+    return {
       drafts: state.drafts,
       config: state.cfg ? { ...state.cfg, apiKey: '' } : null,
       drive: state.drive,
@@ -2108,9 +2377,16 @@
       skills: skills ? skills.custom() : [],
       episodes: journal ? journal.episodes() : [],
       insights: journal ? journal.insights() : [],
+      school: secGet(LS.school, {}),
+      wins: secGet(LS.wins, []),
+      activity: secGet(LS.activity, {}),
+      packs: loadPacks(),
       at: new Date().toISOString()
     };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  }
+
+  function exportData() {
+    const blob = new Blob([JSON.stringify(collectBackup(), null, 2)], { type: 'application/json' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = 'jenni-backup-' + new Date().toISOString().slice(0, 10) + '.json';
@@ -2119,46 +2395,149 @@
     toast('Backup download ho gaya (key shaamil nahi hai)');
   }
 
+  /* Merge, never replace: a restore on a phone that already learned things must
+     not throw the newer learning away. Returns how many things came back. */
+  function applyBackup(data) {
+    let restored = 0;
+    if (Array.isArray(data.drafts)) {
+      const known = new Set(state.drafts.map((d) => d.id));
+      const fresh = data.drafts.filter((d) => d && d.id && !known.has(d.id));
+      state.drafts = [...fresh, ...state.drafts];
+      restored += fresh.length;
+      persist('drafts');
+      paintDrafts();
+    }
+    const merge = (key, incoming, idOf) => {
+      if (!Array.isArray(incoming) || !incoming.length) return 0;
+      let existing = [];
+      try { existing = JSON.parse(secureStore.getItem(key) || '[]'); } catch (error) { existing = []; }
+      if (!Array.isArray(existing)) existing = [];
+      const seen = new Set(existing.map(idOf));
+      const fresh = incoming.filter((item) => item && !seen.has(idOf(item)));
+      if (!fresh.length) return 0;
+      secureStore.setItem(key, JSON.stringify(fresh.concat(existing)));
+      return fresh.length;
+    };
+    restored += merge(LS.memory, data.memory, (fact) => String(fact.text || '').toLowerCase())
+      + merge(LS.skills, data.skills, (skill) => String(skill.name || '').toLowerCase())
+      + merge(LS.episodes, data.episodes, (episode) => episode.id)
+      + merge(LS.insights, data.insights, (insight) => String(insight.text || '').toLowerCase())
+      + merge(LS.wins, data.wins, (w) => w.at + w.text);
+    if (Array.isArray(data.notes) && BRAIN) {
+      let list = state.notes;
+      const before = list.length;
+      data.notes.slice(0, 200).forEach((n) => {
+        const due = n && /^\d{4}-\d{2}-\d{2}$/.test(n.due || '') ? n.due : '';
+        const next = BRAIN.addMemory(list, n && n.text, n && n.cat, n && n.ts, due);   // untrusted: re-validated
+        if (next !== list && n.repeat && ['daily', 'weekly', 'monthly'].includes(n.repeat)) { const t = next[next.length - 1]; t.repeat = n.repeat; if (Number.isInteger(n.weekday)) t.weekday = n.weekday; t.rc = 1; }
+        list = next;
+      });
+      restored += list.length - before;
+      saveNotes(list);
+    }
+    if (data.school && typeof data.school === 'object' && !loadSchool().name && data.school.name) saveSchool(Object.assign(loadSchool(), data.school));
+    if (data.activity && typeof data.activity === 'object') {
+      const mine = secGet(LS.activity, {});
+      Object.keys(data.activity).forEach((k) => { if (Array.isArray(data.activity[k])) mine[k] = Array.from(new Set((mine[k] || []).concat(data.activity[k]))).sort().slice(-24); });
+      secSet(LS.activity, mine);
+    }
+    paintMemory();
+    return restored;
+  }
+
   function importData(file) {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const data = JSON.parse(reader.result);
-        if (Array.isArray(data.drafts)) {
-          const known = new Set(state.drafts.map((d) => d.id));
-          state.drafts = [...data.drafts.filter((d) => d && d.id && !known.has(d.id)), ...state.drafts];
-          persist('drafts');
-          paintDrafts();
-        }
-        /* Merge, never replace: a restore on a phone that already learned
-           things must not throw the newer learning away. */
-        const merge = (key, incoming, idOf) => {
-          if (!Array.isArray(incoming) || !incoming.length) return 0;
-          let existing = [];
-          try { existing = JSON.parse(secureStore.getItem(key) || '[]'); } catch (error) { existing = []; }
-          if (!Array.isArray(existing)) existing = [];
-          const seen = new Set(existing.map(idOf));
-          const fresh = incoming.filter((item) => item && !seen.has(idOf(item)));
-          if (!fresh.length) return 0;
-          secureStore.setItem(key, JSON.stringify(fresh.concat(existing)));
-          return fresh.length;
-        };
-        const restored = merge(LS.memory, data.memory, (fact) => String(fact.text || '').toLowerCase())
-          + merge(LS.skills, data.skills, (skill) => String(skill.name || '').toLowerCase())
-          + merge(LS.episodes, data.episodes, (episode) => episode.id)
-          + merge(LS.insights, data.insights, (insight) => String(insight.text || '').toLowerCase());
-        if (Array.isArray(data.notes) && BRAIN) {
-          let list = state.notes;
-          data.notes.slice(0, 200).forEach((n) => { list = BRAIN.addMemory(list, n && n.text, n && n.cat, n && n.ts, n && /^\d{4}-\d{2}-\d{2}$/.test(n.due || '') ? n.due : ''); });   // untrusted: re-validated
-          saveNotes(list);
-        }
-        paintMemory();
+        const restored = applyBackup(JSON.parse(reader.result));
         toast(restored ? `Import ho gaya — ${restored} cheez wapas aayi` : 'Import ho gaya');
       } catch (error) {
         toast('File padhi nahi ja saki.', true);
       }
     };
     reader.readAsText(file);
+  }
+
+  /* ── Drive backup: encrypted, one file, restorable on a new phone ───────── */
+  const BACKUP_NAME = 'jenni-backup.json';
+  const hashOf = (text) => { let h = 5381; for (let i = 0; i < text.length; i += 1) h = ((h << 5) + h + text.charCodeAt(i)) | 0; return String(h); };
+  const driveTokenNow = () => (state.driveToken && state.driveToken.expires > now() ? state.driveToken.token : null);
+
+  function backupPassphrase(ask) {
+    if (security.enabled && security.pin) return security.pin;
+    if (state.backupPass) return state.backupPass;
+    if (!ask) return null;
+    const typed = window.prompt('Backup passphrase (ise yaad rakhna — naye phone par restore ke liye chahiye)');
+    if (typed && typed.length >= 4) { state.backupPass = typed; return typed; }
+    return null;
+  }
+
+  async function findBackupFile(token) {
+    const q = encodeURIComponent(`name='${BACKUP_NAME}' and trashed=false`);
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&pageSize=5`, { headers: { Authorization: `Bearer ${token}` } });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((body && body.error && body.error.message) || `Drive HTTP ${res.status}`);
+    return ((body && body.files) || []).find((f) => f.name === BACKUP_NAME) || null;
+  }
+
+  async function backupToDrive({ silent } = {}) {
+    if (!driveReady()) { if (!silent) toast('Pehle Drive connect karo.', true); return false; }
+    const pass = backupPassphrase(!silent);
+    if (!pass) return false;
+    const token = silent ? driveTokenNow() : await driveTokenOrAsk();
+    if (!token) return false;
+    const data = collectBackup();
+    const fingerprint = hashOf(JSON.stringify(Object.assign({}, data, { at: '' })));
+    const sealed = await SEC.seal(pass, JSON.stringify(data));
+    const existing = await findBackupFile(token);
+    const boundary = 'jenni' + now();
+    const meta = existing ? {} : { name: BACKUP_NAME };
+    const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(sealed)}\r\n--${boundary}--`;
+    const url = existing
+      ? `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=multipart&fields=id,modifiedTime`
+      : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime';
+    const res = await fetch(url, { method: existing ? 'PATCH' : 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+    if (!res.ok) throw new Error(`Backup fail (HTTP ${res.status}).`);
+    writeJson(LS.backup, { at: now(), hash: fingerprint });
+    paintBackupStatus();
+    if (!silent) toast('Drive par encrypted backup ho gaya');
+    return true;
+  }
+
+  async function restoreFromDrive() {
+    if (!driveReady()) { toast('Pehle Drive connect karo.', true); return; }
+    const token = await driveTokenOrAsk();
+    const file = await findBackupFile(token);
+    if (!file) { toast('Drive me jenni-backup.json nahi mila.', true); return; }
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`Backup padh nahi paye (HTTP ${res.status}).`);
+    const sealed = await res.json();
+    let pass = backupPassphrase(false), plain = null;
+    for (let attempt = 0; attempt < 2 && plain === null; attempt += 1) {
+      if (!pass) { pass = window.prompt('Backup passphrase daalo'); if (!pass) return; }
+      try { plain = await SEC.open(pass, sealed); } catch (error) { pass = null; if (attempt === 1) throw new Error('Passphrase galat hai.'); }
+    }
+    const restored = applyBackup(JSON.parse(plain));
+    toast(restored ? `Restore ho gaya — ${restored} cheez wapas aayi` : 'Restore ho gaya (kuch naya nahi tha)');
+  }
+
+  function paintBackupStatus() {
+    const el = $('backupStatus');
+    if (!el) return;
+    const info = readJson(LS.backup, null);
+    el.textContent = info ? 'Last backup: ' + new Date(info.at).toLocaleString('en-IN') : 'Abhi tak koi backup nahi.';
+  }
+
+  /* quietly, at most once a day, when nothing needs a prompt */
+  async function maybeAutoBackup() {
+    try {
+      if (!driveReady() || !driveTokenNow() || !backupPassphrase(false)) return;
+      const info = readJson(LS.backup, null);
+      if (info && now() - info.at < 20 * 3600 * 1000) return;
+      const fingerprint = hashOf(JSON.stringify(Object.assign({}, collectBackup(), { at: '' })));
+      if (info && info.hash === fingerprint) return;
+      await backupToDrive({ silent: true });
+    } catch (error) { /* a failed background backup must never bother the owner */ }
   }
 
   /* ══════════════════════════════════════════════════════════════ SHEETS */
@@ -2173,7 +2552,7 @@
     sheet.hidden = false;
     document.body.style.overflow = 'hidden';
     if (name === 'drafts') paintDrafts();
-    if (name === 'drive') { paintDrive(); listDriveFiles(); }
+    if (name === 'drive') { paintDrive(); listDriveFiles(); paintBackupStatus(); }
     if (name === 'setup') fillSetupForm();
     if (name === 'office') paintOffice();
     rememberScreen(name);
@@ -2470,7 +2849,8 @@
 
     const digest = digestChat();
     state.chat = [];
-    writeJson(LS.chat, []);
+    persist('chat');
+    secSet(LS.summary, '');
     paintChat();
     paintMemory();
 
@@ -3022,6 +3402,7 @@
     const cfg = state.cfg;
     setStatus(cfg && cfg.apiKey ? 'ok' : '', cfg && cfg.apiKey ? providerName() + ' · ' + cfg.model : 'setup needed');
     maybeBrief();
+    setTimeout(maybeAutoBackup, 4000);
     paintChat();
     paintDrive();
     paintDrafts();
@@ -3421,6 +3802,19 @@
     /* drive */
     $('btnDriveSave').addEventListener('click', saveClientId);
     $('btnDriveConnect').addEventListener('click', connectDrive);
+    if ($('googleExtended')) {
+      $('googleExtended').checked = Boolean(state.drive && state.drive.extended);
+      $('googleExtended').addEventListener('change', (ev) => {
+        state.drive = Object.assign({}, state.drive, { extended: ev.target.checked });
+        writeJson(LS.drive, state.drive);
+        state.driveToken = null; localStorage.removeItem(LS.driveToken);      // new scopes need a fresh consent
+        paintDrive();
+        setResult('driveResult', ev.target.checked ? 'Calendar + Gmail (read, draft only) ON — ab Connect Google dabao.' : 'Sirf Drive access.', 'ok');
+      });
+      $('btnBackupNow').addEventListener('click', async () => { try { await backupToDrive(); } catch (e) { toast(e.message, true); } });
+      $('btnRestore').addEventListener('click', async () => { try { await restoreFromDrive(); } catch (e) { toast(e.message, true); } });
+      paintBackupStatus();
+    }
     $('btnDriveOff').addEventListener('click', disconnectDrive);
     $('btnDriveRefresh').addEventListener('click', listDriveFiles);
     $('btnDrivePaste').addEventListener('click', pasteClientId);

@@ -321,6 +321,17 @@
     </div>
     <p class="field-hint">Scope <code>drive.file</code> — sirf apni banayi files.</p>
 
+    <label class="row"><input type="checkbox" id="googleExtended"> <span>Calendar + Gmail bhi (sirf padhna + draft; send nahi)</span></label>
+    <p class="field-hint">On karne par scopes: <code>calendar.events</code>, <code>gmail.readonly</code>, <code>gmail.compose</code>. Jenni mail <strong>bhej nahi sakti</strong>, sirf draft bana sakti hai.</p>
+
+    <h3 class="sheet__sub">Backup (encrypted)</h3>
+    <p class="field-hint">Poori memory, drafts, playbooks Drive me ek encrypted file me. Naye phone par Restore se wapas. PIN set ho to wahi passphrase hai.</p>
+    <div class="row row--wrap">
+      <button class="btn btn--primary btn--small" type="button" id="btnBackupNow">Backup now</button>
+      <button class="btn btn--small" type="button" id="btnRestore">Restore</button>
+    </div>
+    <p class="room-result" id="backupStatus" role="status"></p>
+
     <h3 class="sheet__sub">Uploaded files</h3>
     <div class="stack" id="driveFiles"></div>
   </div>
@@ -547,6 +558,13 @@
 <script src="./connectors.js"></script>
 <script src="./agent.js"></script>
 <script src="./office.js"></script>
+<script src="./memory.js"></script>
+<script src="./budget.js"></script>
+<script src="./verify.js"></script>
+<script src="./tools.js"></script>
+<script src="./google.js"></script>
+<script src="./proactive.js"></script>
+<script src="./evals.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

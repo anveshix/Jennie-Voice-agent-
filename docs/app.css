@@ -1121,3 +1121,6 @@ code {
 .bubble.is-streaming::after { content: '▍'; opacity: .6; animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 #offOut { width: 100%; min-height: 220px; margin: 10px 0; white-space: pre; }
+.msg__checks { font-size: .72rem; margin: 4px 6px 0; opacity: .85; }
+.msg__checks.is-ok { color: var(--mint, #2ee6a8); }
+.msg__checks.is-warn { color: #ffb454; }
