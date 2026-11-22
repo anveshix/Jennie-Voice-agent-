@@ -26,6 +26,7 @@
     evals: 'jenni_evals_v1',       // self-test history
     autonomy: 'jenni_autonomy_v1', // ask | smart | auto
     backup: 'jenni_backup_v1',     // last Drive backup info
+    voicecfg: 'jenni_voicecfg_v1', // chosen speaking/listening engines + their keys (encrypted with the PIN)
     school: 'jenni_school_v1', // letterhead profile for the Office desk
     notes: 'jenni_notes_v1',   // owner notes + tasks (brain.js)
     dk: 'jenni_dk_v1',         // salt for the data key (not secret)
@@ -66,6 +67,7 @@
   const TOOLS = window.JENNI_TOOLS;
   const GOOGLE = window.JENNI_GOOGLE;
   const AUDIO = window.JENNI_AUDIO;
+  const VOICES = window.JENNI_VOICES;
   const PRO = window.JENNI_PROACTIVE;
   const EVALS = window.JENNI_EVALS;
   const AGENT = window.JENNI_AGENT || {};
@@ -73,7 +75,7 @@
   /* Long-term memory and learned skills. Both are plain localStorage data, so
      they show up in the UI, survive reloads and vanish on "Erase everything".
      Declared after AGENT, which they depend on. */
-  const SECURE_KEYS = [LS.chat, LS.drafts, LS.notes, LS.school, LS.wins, LS.activity, LS.summary, LS.actions, LS.evals, LS.memory, LS.skills, LS.episodes, LS.insights];
+  const SECURE_KEYS = [LS.chat, LS.drafts, LS.notes, LS.school, LS.voicecfg, LS.wins, LS.activity, LS.summary, LS.actions, LS.evals, LS.memory, LS.skills, LS.episodes, LS.insights];
   const vault = new Map();          // decrypted JSON strings while unlocked
   const vaultQueue = {};            // per-key write chain (keeps writes in order)
   const secureStore = {
@@ -1387,6 +1389,65 @@
     return text.slice(0, 900);
   }
 
+
+  /* ── voice engines: browser (default), ElevenLabs, or any OpenAI-compatible server ── */
+  const loadVoiceCfg = () => (VOICES ? VOICES.normalizeConfig(secGet(LS.voicecfg, {})) : { tts: { engine: 'browser' }, stt: { engine: 'default' } });
+  let extPlayer = null;
+
+  function externalTts() {
+    if (!VOICES || voice.extFailed) return null;
+    const tts = VOICES.createTts(loadVoiceCfg().tts);
+    if (!tts) return null;
+    extPlayer = extPlayer || VOICES.createPlayer({});
+    return { tts, player: extPlayer };
+  }
+  function externalStt() {
+    if (!VOICES || voice.sttFailed) return null;
+    const c = loadVoiceCfg();
+    return VOICES.createStt(c.stt, c.tts);
+  }
+  function stopEngines() {
+    if (window.speechSynthesis) { try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ } }
+    if (extPlayer) extPlayer.stop();
+  }
+  /* Autoplay policies: one silent clip during a tap lets later sentences play. */
+  function unlockAudio() {
+    if (!AUDIO || !externalTts() || typeof Audio === 'undefined') return;
+    try {
+      const wav = AUDIO.encodeWav(new Float32Array(160), 16000);
+      const a = new Audio(URL.createObjectURL(new Blob([wav], { type: 'audio/wav' })));
+      const p = a.play(); if (p && p.catch) p.catch(() => {});
+    } catch (e) { /* not available */ }
+  }
+
+  function browserChunk(clean) {
+    return new Promise((resolve) => {
+      if (!window.speechSynthesis) { resolve(false); return; }
+      try {
+        const u = makeUtterance(clean);
+        u.onend = () => resolve(true); u.onerror = () => resolve(false);
+        window.speechSynthesis.speak(u);
+      } catch (e) { resolve(false); }
+    });
+  }
+
+  /* One sentence, through whichever engine is chosen. A failing paid/remote
+     engine never leaves her silent: it explains once and the phone voice takes over. */
+  function speakChunk(clean) {
+    const ext = externalTts();
+    if (!ext) return browserChunk(clean);
+    return new Promise((resolve) => {
+      ext.player.enqueue(ext.tts.synth(clean), {
+        onEnd: (error) => {
+          if (!error) { resolve(true); return; }
+          if (!voice.extFailed) toast(error.message + ' — phone ki awaaz par laut rahi hoon', true);
+          voice.extFailed = true;
+          ext.player.whenIdle().then(() => browserChunk(clean)).then(resolve);
+        }
+      });
+    });
+  }
+
   function makeUtterance(clean) {
     const utterance = new SpeechSynthesisUtterance(clean);
     utterance.lang = voice.lang;
@@ -1406,15 +1467,11 @@
     const settle = () => { if (closed && pendingCount === 0 && waiter) { const w = waiter; waiter = null; w(); } };
     function say(raw) {
       const clean = speakableText(raw);
-      if (!clean || !voiceEnabled() || !window.speechSynthesis) return;
-      try {
-        const u = makeUtterance(clean);
-        pendingCount += 1; spokenCount += 1;
-        voice.speaking = true; voice.saying = (voice.saying + ' ' + clean).slice(-1200); paintVoiceUi(); onSpeakingChanged(true);
-        const end = () => { pendingCount -= 1; if (pendingCount <= 0) { voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false); } settle(); };
-        u.onend = end; u.onerror = end;
-        window.speechSynthesis.speak(u);
-      } catch (e) { /* speech unavailable */ }
+      if (!clean || !voiceEnabled() || (!window.speechSynthesis && !externalTts())) return;
+      pendingCount += 1; spokenCount += 1;
+      voice.speaking = true; voice.saying = (voice.saying + ' ' + clean).slice(-1200); paintVoiceUi(); onSpeakingChanged(true);
+      const end = () => { pendingCount -= 1; if (pendingCount <= 0) { voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false); } settle(); };
+      speakChunk(clean).then(end, end);
     }
     function drain(final) {
       for (;;) {
@@ -1436,7 +1493,7 @@
         drain(cut);
       },
       mute() { cut = true; buf = ''; },
-      reset() { buf = ''; cut = false; try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ } pendingCount = 0; spokenCount = 0; },
+      reset() { buf = ''; cut = false; stopEngines(); pendingCount = 0; spokenCount = 0; },
       spoken: () => spokenCount > 0,
       finish() {
         closed = true; drain(true);
@@ -1447,40 +1504,20 @@
   }
 
   function speak(text) {
-    return new Promise((resolve) => {
-      const clean = speakableText(text);
-      if (!clean || !window.speechSynthesis || !voiceEnabled()) { resolve(false); return; }
-      try {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(clean);
-        const lang = voice.lang;
-        utterance.lang = lang;
-        const chosen = voice.ttsVoice || pickVoice(lang);
-        if (chosen) utterance.voice = chosen;
-        // A touch quicker and brighter than the phone default: this is a
-        // 21-year-old chatting, not a narrator. Still easy to follow.
-        utterance.rate = 1.06;
-        utterance.pitch = 1.08;
-        utterance.volume = 1;
-        voice.speaking = true;
-        voice.saying = clean;
-        paintVoiceUi();
-        onSpeakingChanged(true);
-        utterance.onend = () => { voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false); resolve(true); };
-        utterance.onerror = () => { voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false); resolve(false); };
-        window.speechSynthesis.speak(utterance);
-      } catch (error) {
-        voice.speaking = false;
-        paintVoiceUi();
-        resolve(false);
-      }
-    });
+    const clean = speakableText(text);
+    if (!clean || !voiceEnabled() || (!window.speechSynthesis && !externalTts())) return Promise.resolve(false);
+    stopEngines();
+    voice.speaking = true;
+    voice.saying = clean;
+    paintVoiceUi();
+    onSpeakingChanged(true);
+    // A touch quicker and brighter than the phone default (see makeUtterance): a
+    // 21-year-old chatting, not a narrator.
+    return speakChunk(clean).then((ok) => { voice.speaking = false; paintVoiceUi(); onSpeakingChanged(false); return ok; });
   }
 
   function stopSpeaking() {
-    if (window.speechSynthesis) {
-      try { window.speechSynthesis.cancel(); } catch (error) { /* ignore */ }
-    }
+    stopEngines();
     voice.speaking = false;
     paintVoiceUi();
   }
@@ -1558,7 +1595,7 @@
   function listenOnce() {
     if (!voice.mode || voice.speaking || state.busy) return;
     const Ctor = speechRecognitionCtor();
-    if (!Ctor) { fallbackRecording(); return; }
+    if (!Ctor || externalStt()) { fallbackRecording(); return; }
     try {
       if (!voice.recognition) voice.recognition = buildRecognition();
       voice.recognition.lang = voice.lang;
@@ -1736,6 +1773,11 @@
 
   async function transcribeWithProvider(blob) {
     const cfg = state.cfg;
+    const ext = externalStt();
+    if (ext) {
+      try { return await ext.transcribe(blob, { lang: voice.lang }); }
+      catch (error) { voice.sttFailed = true; throw new Error(error.message + ' — ab default sunne wala tareeka chalega.'); }
+    }
     if (cfg && (cfg.transcribe === 'chat' || (!cfg.transcribe && isGemini(cfg)))) return transcribeViaChat(blob);
     if (!cfg || !cfg.transcribe) {
       throw new Error('Voice samajhne ke liye "Voice-to-text model" Setup me bharna hoga (jaise whisper-1).');
@@ -1827,6 +1869,7 @@
     }
     stopWake();
     stopSpeaking();
+    unlockAudio();
     voice.mode = true;
     voice.lastHandled = '';
     localStorage.setItem('jenni_voice_auto', '1');
@@ -2031,6 +2074,53 @@
     }
     if ($('btnEval')) $('btnEval').addEventListener('click', runSelfTest);
     setInterval(() => { refreshEvents().then(paintSuggestions); }, 5 * 60000);
+  }
+
+
+  /* ── Setup: choose how Jenni speaks and listens ─────────────────────────── */
+  function paintVoiceEngineForm() {
+    if (!$('vTtsEngine')) return;
+    const c = loadVoiceCfg();
+    $('vTtsEngine').value = c.tts.engine; $('vKey').value = c.tts.key; $('vVoice').value = c.tts.voice;
+    $('vModel').value = c.tts.model; $('vBase').value = c.tts.base;
+    $('vSttEngine').value = c.stt.engine; $('vSttKey').value = c.stt.key; $('vSttBase').value = c.stt.base; $('vSttModel').value = c.stt.model;
+  }
+  function wireVoiceEngines() {
+    if (!$('vTtsEngine') || !VOICES) return;
+    paintVoiceEngineForm();
+    const say = (m, k) => setResult('vResult', m, k);
+    $('btnVoiceCfgSave').addEventListener('click', () => {
+      const raw = {
+        tts: { engine: $('vTtsEngine').value, key: $('vKey').value, voice: $('vVoice').value, model: $('vModel').value, base: $('vBase').value },
+        stt: { engine: $('vSttEngine').value, key: $('vSttKey').value, base: $('vSttBase').value, model: $('vSttModel').value }
+      };
+      const norm = VOICES.normalizeConfig(raw);
+      secSet(LS.voicecfg, norm);
+      voice.extFailed = false; voice.sttFailed = false;
+      const downgraded = (raw.tts.engine !== norm.tts.engine) || (raw.stt.engine !== norm.stt.engine);
+      say(downgraded ? 'Save hua, par kuch adhura tha (key/voice/https URL) — wahan phone ki awaaz rakhi hai.' : 'Save ho gaya. "Awaaz test" dabao.', downgraded ? 'error' : 'ok');
+      paintVoiceEngineForm();
+    });
+    $('btnVoicesLoad').addEventListener('click', async () => {
+      try {
+        say('Voices la rahi hoon…', 'busy');
+        const list = await VOICES.listElevenVoices($('vKey').value);
+        const sel = $('vVoiceList'); sel.textContent = '';
+        list.forEach((v) => { const o = document.createElement('option'); o.value = v.id; o.textContent = v.name + (v.hint ? ' (' + v.hint + ')' : ''); sel.appendChild(o); });
+        sel.hidden = !list.length;
+        if (list.length) $('vVoice').value = list[0].id;
+        say(list.length + ' voices mili — list se chuno, phir Save.', 'ok');
+      } catch (e) { say(e.message, 'error'); }
+    });
+    $('vVoiceList').addEventListener('change', (ev) => { $('vVoice').value = ev.target.value; });
+    $('btnVoiceCfgTest').addEventListener('click', async () => {
+      voice.extFailed = false;
+      if (!externalTts()) { say('Pehle engine, key aur voice bhar ke Save karo — abhi phone ki awaaz chalegi.', 'error'); speakSample(); return; }
+      unlockAudio();
+      say('Bol rahi hoon…', 'busy');
+      await speak('Namaste, main Jenni hoon. Ye meri nayi awaaz hai.');
+      say(voice.extFailed ? 'Ye engine chala nahi — upar ka sandesh dekho.' : 'Theek lagi? Isi se bolegi.', voice.extFailed ? 'error' : 'ok');
+    });
   }
 
   /* ── Office desk ───────────────────────────────────────────────────────── */
@@ -2774,7 +2864,7 @@
     if (name === 'drive') { paintDrive(); listDriveFiles(); paintBackupStatus(); }
     if (name === 'setup') fillSetupForm();
     if (name === 'office') paintOffice();
-    if (name === 'setup') { paintActionLog(); paintNotes(); }
+    if (name === 'setup') { paintActionLog(); paintNotes(); paintVoiceEngineForm(); }
     rememberScreen(name);
     if (!options.silent) setHash(name);
     paintTabs();
@@ -3813,6 +3903,7 @@
     }
     wireOffice();
     wireAgentSettings();
+    wireVoiceEngines();
     if ($('btnMemAdd') && BRAIN) {
       $('btnMemAdd').addEventListener('click', () => {
         const box = $('memInput');

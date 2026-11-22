@@ -405,3 +405,17 @@ Setup → Memory → **Task reminders**. Overdue/today tasks trigger a notificat
 Voice input without browser speech recognition: Gemini (empty voice-to-text model) hears the recording through the chat endpoint — converted in the browser to 16 kHz WAV (`docs/audio.js`) — and recordings now end ~0.9 s after the owner stops talking instead of on a fixed 6 s timer. Set the voice-to-text model to `chat` to use the same route with other audio-capable providers.
 
 Known limits: a static site has no push server (see Task reminders); the Gemini audio route was verified with mocked responses, not a live Gemini call; Google calls were verified against mocked responses, not a live account; cross-device sync is backup/restore, not live.
+
+## Voices: ElevenLabs and open-source (Setup → Awaaz engine)
+
+Default stays the free phone voice. Choose per direction:
+
+| | Speaking (TTS) | Listening (STT) |
+|---|---|---|
+| **ElevenLabs** | key + Voice ID (use "Meri ElevenLabs voices" to list yours); default model `eleven_flash_v2_5` (Hindi/Hinglish) | **Scribe** (`scribe_v1`), reuses the same key |
+| **OpenAI-compatible server** | any `…/v1/audio/speech` — OpenAI, Groq, or open-source you host: Kokoro-FastAPI, openedai-speech (Piper), LocalAI | any `…/v1/audio/transcriptions` — Whisper, Speaches / faster-whisper-server |
+| Browser / Gemini | phone voice | browser recognition, or Gemini through the chat endpoint |
+
+How it behaves: each sentence is sent for synthesis as soon as it is written and played in order (prefetch), so it keeps the streaming feel. If the chosen engine fails (bad key, quota, network) Jenni says why once and finishes in the phone voice — never silent. A failing listening engine falls back to the default the same way.
+
+Notes: the server URL must be **https** (or `http://localhost`); browsers block a secure page from calling a plain-http LAN box — expose it with a tunnel (Cloudflare Tunnel, Tailscale Funnel) or put it behind your own HTTPS. Keys live in the encrypted store, so a PIN protects them; they are never in backups/exports. ElevenLabs bills per character spoken. Running a model *inside* the browser (WASM Whisper/Piper from GitHub) is not included: it needs ~80–300 MB of downloads and a looser Content-Security-Policy.

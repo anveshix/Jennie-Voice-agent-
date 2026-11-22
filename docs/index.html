@@ -397,6 +397,35 @@
     <button class="btn" type="button" id="btnPackFind">Find skills</button>
     <p class="room-result" id="nmResult" role="status" aria-live="polite"></p>
 
+    <h3 class="sheet__sub">Awaaz engine (bolna / sunna)</h3>
+    <p class="field-hint">Default: phone ki free awaaz. Chaho to ElevenLabs ya apna open-source voice server (OpenAI-compatible). Jo Jenni bolegi wo us service ko bheja jata hai; key PIN se encrypt rehti hai.</p>
+    <label class="label" for="vTtsEngine">Bolna (TTS)</label>
+    <select class="field" id="vTtsEngine">
+      <option value="browser">Phone ki awaaz (free)</option>
+      <option value="eleven">ElevenLabs</option>
+      <option value="compat">OpenAI-compatible server (Kokoro, Piper, OpenAI, Groq…)</option>
+    </select>
+    <input class="field" id="vKey" type="password" autocomplete="off" placeholder="API key (ElevenLabs / server)">
+    <input class="field mono" id="vVoice" spellcheck="false" autocapitalize="off" placeholder="Voice ID (ElevenLabs) ya voice naam (af_bella, alloy…)">
+    <select class="field" id="vVoiceList" hidden></select>
+    <input class="field mono" id="vModel" spellcheck="false" autocapitalize="off" placeholder="Model (khali = default; ElevenLabs: eleven_flash_v2_5)">
+    <input class="field mono" id="vBase" spellcheck="false" autocapitalize="off" placeholder="Server URL https://…/v1 (sirf OpenAI-compatible ke liye)">
+    <label class="label" for="vSttEngine">Sunna (STT)</label>
+    <select class="field" id="vSttEngine">
+      <option value="default">Browser / Gemini (default)</option>
+      <option value="eleven">ElevenLabs Scribe</option>
+      <option value="compat">OpenAI-compatible server (Whisper, faster-whisper…)</option>
+    </select>
+    <input class="field" id="vSttKey" type="password" autocomplete="off" placeholder="STT key (khali = upar wali key)">
+    <input class="field mono" id="vSttBase" spellcheck="false" autocapitalize="off" placeholder="STT server URL https://…/v1">
+    <input class="field mono" id="vSttModel" spellcheck="false" autocapitalize="off" placeholder="STT model (khali = scribe_v1 / whisper-1)">
+    <div class="row row--wrap">
+      <button class="btn btn--primary btn--small" type="button" id="btnVoiceCfgSave">Save</button>
+      <button class="btn btn--small" type="button" id="btnVoicesLoad">Meri ElevenLabs voices</button>
+      <button class="btn btn--small" type="button" id="btnVoiceCfgTest">Awaaz test</button>
+    </div>
+    <p class="room-result" id="vResult" role="status" aria-live="polite"></p>
+
     <h3 class="sheet__sub">Jenni ka agent mode</h3>
     <label class="label" for="autonomySel">Kitni azaadi</label>
     <select class="field" id="autonomySel">
@@ -585,6 +614,7 @@
 <script src="./proactive.js"></script>
 <script src="./evals.js"></script>
 <script src="./audio.js"></script>
+<script src="./voices.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>

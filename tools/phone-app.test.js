@@ -160,6 +160,11 @@ async function boot(options = {}) {
         })
       };
     }
+    if (target.includes('api.elevenlabs.io/v1/text-to-speech')) {
+      if (options.elevenFail) return { ok: false, status: options.elevenFail, json: async () => ({ detail: { message: 'bad' } }) };
+      return { ok: true, status: 200, blob: async () => new window.Blob(['mp3']) };
+    }
+    if (target.includes('api.elevenlabs.io/v1/speech-to-text')) return { ok: true, status: 200, json: async () => ({ text: 'kal ka din kaisa rahega' }) };
     if (target.includes('upload/drive')) {
       const raw = String(fetchOptions.body || '');
       const parts = raw.split(/--jenni\d+/);
@@ -193,6 +198,7 @@ async function boot(options = {}) {
   window.eval(fs.readFileSync(path.join(ROOT, 'office.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'evals.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'audio.js'), 'utf8'));
+  window.eval(fs.readFileSync(path.join(ROOT, 'voices.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'proactive.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'google.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(ROOT, 'tools.js'), 'utf8'));
@@ -1265,6 +1271,60 @@ function submit(window, text) {
   ok(!b.calls.some((c) => c.url.includes('/audio/transcriptions')), 'no /audio/transcriptions call is made for Gemini');
   ok([...b.window.document.querySelectorAll('.msg--me')].some((m) => m.textContent.includes('kal ka din kaisa rahega')), 'the transcript becomes the owner\'s message');
   b.window.document.querySelector('.tab[data-tab="chat"]').click();
+  b.dom.window.close();
+
+
+  /* ── pluggable voices: ElevenLabs speaking + Scribe listening ───────────── */
+  const ELEVEN_CFG = JSON.stringify({ tts: { engine: 'eleven', key: 'XI-KEY', voice: 'VOICE1', model: '' }, stt: { engine: 'default' } });
+  const playInfo = () => ({ played: [], made: 0 });
+  function fakeAudio(win, info) {
+    win.URL.createObjectURL = () => { info.made += 1; return 'blob:x' + info.made; };
+    win.URL.revokeObjectURL = () => {};
+    win.Audio = class { constructor(url) { this.url = url; } play() { info.played.push(this.url); setTimeout(() => this.onended && this.onended(), 5); return Promise.resolve(); } pause() {} };
+  }
+  let info = playInfo();
+  b = await boot({ script: ['Haan yaar, ye kaam ho jayega. Doosri line bhi suno.'], seed: { jenni_voicecfg_v1: ELEVEN_CFG } });
+  fakeAudio(b.window, info);
+  b.$('btnVoice').click(); await wait(90);
+  b.rec.last.say('kal ka din kaisa rahega');
+  await wait(1200);
+  const elevenCalls = b.calls.filter((c) => c.url.includes('api.elevenlabs.io/v1/text-to-speech/VOICE1'));
+  ok(elevenCalls.length >= 1 && elevenCalls[0].options.headers['xi-api-key'] === 'XI-KEY', 'ElevenLabs voices the reply with the owner\'s key');
+  ok(info.played.length >= elevenCalls.length && b.tts.spoken.length === 0, 'its audio is played, the phone voice stays silent', info.played.length + '/' + b.tts.spoken.length);
+  ok(JSON.parse(elevenCalls[0].options.body).model_id === 'eleven_flash_v2_5', 'a fast multilingual model is the default');
+  b.rec.last.say('ruko'); await wait(300);
+  b.dom.window.close();
+
+  info = playInfo();
+  b = await boot({ script: ['Haan yaar, ye kaam ho jayega. Doosri line bhi suno.'], seed: { jenni_voicecfg_v1: ELEVEN_CFG }, elevenFail: 401 });
+  fakeAudio(b.window, info);
+  b.$('btnVoice').click(); await wait(90);
+  b.rec.last.say('kal ka din kaisa rahega');
+  await wait(600);
+  ok(/key galat/.test(b.$('toastHost').textContent), 'the failure is explained in plain words', b.$('toastHost').textContent);
+  await wait(500);
+  ok(b.tts.spoken.length >= 1, 'if the paid voice fails, Jenni still answers in the phone voice');
+  b.rec.last.say('ruko'); await wait(300);
+  b.dom.window.close();
+
+  b = await boot({ script: ['Achha rahega.'], seed: { jenni_voicecfg_v1: JSON.stringify({ tts: { engine: 'browser' }, stt: { engine: 'eleven', key: 'XI-KEY' } }) } });
+  b.window.navigator.mediaDevices = { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) };
+  b.window.MediaRecorder = class { constructor() { this.state = 'inactive'; this.mimeType = 'audio/webm'; } start() { this.state = 'recording'; setTimeout(() => { this.state = 'inactive'; this.ondataavailable({ data: new b.window.Blob([new Uint8Array(4000)]) }); this.onstop(); }, 40); } stop() {} };
+  b.$('btnVoice').click(); await wait(900);
+  ok(b.calls.some((c) => c.url.includes('api.elevenlabs.io/v1/speech-to-text') && c.options.headers['xi-api-key'] === 'XI-KEY'), 'ElevenLabs Scribe listens when chosen, even though the browser could');
+  ok([...b.window.document.querySelectorAll('.msg--me')].some((m) => m.textContent.includes('kal ka din kaisa rahega')), 'the Scribe transcript becomes the owner\'s message');
+  b.window.document.querySelector('.tab[data-tab="chat"]').click();
+  b.dom.window.close();
+
+  /* settings form normalises and stores the config encrypted-at-rest */
+  b = await boot();
+  b.window.document.querySelector('.tab[data-tab="setup"]').click(); await wait(150);
+  b.$('vTtsEngine').value = 'eleven'; b.$('vKey').value = 'K'; b.$('vVoice').value = '';
+  b.$('btnVoiceCfgSave').click();
+  ok(/adhura/.test(b.$('vResult').textContent) && JSON.parse(b.window.localStorage.getItem('jenni_voicecfg_v1')).tts.engine === 'browser', 'an incomplete engine setup falls back to the phone voice and says so');
+  b.$('vTtsEngine').value = 'compat'; b.$('vBase').value = 'https://tts.example/v1'; b.$('vVoice').value = 'af_bella'; b.$('vKey').value = '';
+  b.$('btnVoiceCfgSave').click();
+  ok(JSON.parse(b.window.localStorage.getItem('jenni_voicecfg_v1')).tts.engine === 'compat', 'an OpenAI-compatible open-source server can be saved');
   b.dom.window.close();
 
   /* ── legacy notes stored under agent.js's key are split out once ───────── */
