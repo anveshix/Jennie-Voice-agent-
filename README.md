@@ -452,7 +452,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately as desc
 
 ## License
 
-[CC0 1.0 Universal](LICENSE) — the author has waived copyright; anyone may reuse this code without conditions. Fonts loaded from Google Fonts keep their own OFL 1.1 licences; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The repository contains a `LICENSE` file (CC0 1.0) that was committed before this cleanup. The maintainer has not yet confirmed it, so treat the licence as unconfirmed until the maintainer decides. Fonts loaded from Google Fonts keep their own OFL 1.1 licences; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Author
 
