@@ -1,6 +1,6 @@
 # Third-party notices
 
-The app loads these fonts from Google Fonts at run time (`app.html`, `index.html`, `docs/index.html`). They are not copied into the repository, except for the licence texts below.
+The app loads these fonts from Google Fonts at run time (`app.html`). They are not copied into the repository, except for the licence texts below.
 
 | Font | Licence | Copyright | Licence text |
 |---|---|---|---|
