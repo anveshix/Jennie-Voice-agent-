@@ -1,5 +1,7 @@
 # Jenni Voice & Chat Assistant
 
+**[▶ Open the phone app (GitHub Pages)](https://anveshix.github.io/Jennie-Voice-agent-/)** · [Setup guide (Hindi)](docs/guides/Jenni-Setup-Guide-Hindi.md) · [Phone walkthrough (Hindi)](docs/guides/Phone-Setup-Hindi.md) · [Run the Node server](#run-it-locally)
+
 Jenni is a small browser UI backed by a Node.js server. Typed messages and speech transcripts go to a server-configured, OpenAI-compatible chat provider. Replies are shown in the conversation and read aloud with the browser's speech synthesis. The server does not save chat history.
 
 ## No terminal? Use the phone app
@@ -74,7 +76,7 @@ Every screen has a URL: `#voice`, `#drive`, `#drafts`, `#setup`. Shares and book
 where you expect, the last screen is restored on the next visit, and the hardware back
 button closes a sheet before it leaves the app.
 
-Step-by-step Hindi walkthrough: [`Phone-Setup-Hindi.md`](./Phone-Setup-Hindi.md).
+Step-by-step Hindi walkthrough: [`docs/guides/Phone-Setup-Hindi.md`](docs/guides/Phone-Setup-Hindi.md).
 
 The Node app in the repository root is unchanged: `app.html` is the page `npm start`
 serves, and the root `index.html` now only redirects Pages visitors to `docs/`.
@@ -430,3 +432,28 @@ Default stays the free phone voice. Choose per direction:
 How it behaves: each sentence is sent for synthesis as soon as it is written and played in order (prefetch), so it keeps the streaming feel. If the chosen engine fails (bad key, quota, network) Jenni says why once and finishes in the phone voice — never silent. A failing listening engine falls back to the default the same way.
 
 Notes: the server URL must be **https** (or `http://localhost`); browsers block a secure page from calling a plain-http LAN box — expose it with a tunnel (Cloudflare Tunnel, Tailscale Funnel) or put it behind your own HTTPS. Keys live in the encrypted store, so a PIN protects them; they are never in backups/exports. ElevenLabs bills per character spoken. Running a model *inside* the browser (WASM Whisper/Piper from GitHub) is not included: it needs ~80–300 MB of downloads and a looser Content-Security-Policy.
+
+## Folder structure
+
+| Path | Contents |
+|---|---|
+| `server.js` | Node server: serves the UI, the AI proxy and the API Room endpoints |
+| `index.html`, `app.html`, `public/` | Browser UI served by `server.js` (`providers.js`, `app.js`, `app.css`) |
+| `docs/` | Serverless phone app for GitHub Pages, plus shared modules (`brain.js`, `net.js`, `tools.js`, …) |
+| `connections.js` | Telegram and Google Drive connectors |
+| `docs/guides/` | Setup guides in Hindi (Markdown and PDF) |
+| `tools/` | Scripts that build the Word and PDF documents |
+| `*.test.js` | Test suites run with `npm test` |
+| `.claude/` | Settings for the Claude Code assistant used to build this repo |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately as described in [SECURITY.md](SECURITY.md). Never commit API keys: put them in `.env` (ignored) or enter them in the app.
+
+## License
+
+[CC0 1.0 Universal](LICENSE) — the author has waived copyright; anyone may reuse this code without conditions.
+
+## Author
+
+**anveshix** — [github.com/anveshix](https://github.com/anveshix)
