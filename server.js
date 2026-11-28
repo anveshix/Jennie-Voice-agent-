@@ -8,6 +8,7 @@ const providers = require('./public/providers.js');
 const NET = require('./docs/net.js');
 const brain = require('./docs/brain.js');
 const { createConnections, ConnectionError } = require('./connections.js');
+const { createAutomation } = require('./automation/index.js');
 
 const ROOT = __dirname;
 const JSON_LIMIT_BYTES = 128 * 1024;
@@ -428,7 +429,7 @@ function createRateLimiter({ limit = 30, windowMs = 10 * 60 * 1000 } = {}) {
   };
 }
 
-function createAppServer({ env = process.env } = {}) {
+function createAppServer({ env = process.env, automation = null } = {}) {
   // Re-read on every request so an API Room save applies without a restart.
   const currentConfig = () => resolveConfig(env);
   const allowAiRequest = createRateLimiter();
@@ -443,7 +444,8 @@ function createAppServer({ env = process.env } = {}) {
     '/public/providers.js': ['public/providers.js', 'text/javascript; charset=utf-8'],
     '/README.md': ['README.md', 'text/markdown; charset=utf-8'],
     '/manifest.json': ['manifest.json', 'application/manifest+json; charset=utf-8'],
-    '/sw.js': ['sw.js', 'text/javascript; charset=utf-8']
+    '/sw.js': ['sw.js', 'text/javascript; charset=utf-8'],
+    '/auto': ['public/auto.html', 'text/html; charset=utf-8']
   };
 
   const server = http.createServer(async (req, res) => {
@@ -451,7 +453,7 @@ function createAppServer({ env = process.env } = {}) {
     const pathname = getRequestPath(req);
 
     try {
-      if (/^\/api\/(chat|transcribe|connections)/.test(pathname) && accessDenied(req, env)) {
+      if (/^\/api\/(chat|transcribe|connections|auto)/.test(pathname) && accessDenied(req, env)) {
         return jsonResponse(res, 401, { error: { code: 'ACCESS_TOKEN_REQUIRED', message: 'This Jenni server needs an access token.' } });
       }
       if (pathname === '/api/health' && (req.method === 'GET' || req.method === 'HEAD')) {
@@ -634,6 +636,36 @@ function createAppServer({ env = process.env } = {}) {
         return jsonResponse(res, 200, { presets: providers.PRESETS });
       }
 
+      if (pathname.startsWith('/api/auto')) {
+        if (!automation) return jsonResponse(res, 503, { error: { code: 'AUTOMATION_OFF', message: 'Automation is not running (JENNI_AUTOMATION=0 or not started).' } });
+        // High-power surface: remote callers must present JENNI_ACCESS_TOKEN.
+        if (!requestIsLocal(req) && !env.JENNI_ACCESS_TOKEN) return jsonResponse(res, 403, { error: { code: 'TOKEN_REQUIRED', message: 'Set JENNI_ACCESS_TOKEN to use automation remotely.' } });
+        const readJson = async () => { try { return JSON.parse((await readBody(req, JSON_LIMIT_BYTES * 8)).toString('utf8') || '{}'); } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(400, 'INVALID_JSON', 'Body must be JSON.'); } };
+        const parts = pathname.split('/').filter(Boolean).slice(2);
+        const fail = (e) => { throw new HttpError(400, 'AUTOMATION_ERROR', e.message); };
+        if (parts[0] === 'status' && req.method === 'GET') return jsonResponse(res, 200, automation.status());
+        if (parts[0] === 'run' && req.method === 'POST') {
+          const b = await readJson();
+          if (!automation.engine.defs.has(b.recipe)) throw new HttpError(404, 'UNKNOWN_RECIPE', 'No such recipe.');
+          const run = await automation.run(b.recipe, b.input || {}).catch(fail);
+          return jsonResponse(res, 200, { run });
+        }
+        if (parts[0] === 'approvals' && parts[1] && req.method === 'POST') {
+          const b = await readJson();
+          await automation.engine.decideApproval(parts[1], b.approve === true, 'web').catch(fail);
+          return jsonResponse(res, 200, { ok: true });
+        }
+        if (parts[0] === 'jobs' && parts[1] && req.method === 'POST') {
+          const b = await readJson();
+          try { return jsonResponse(res, 200, { job: automation.scheduler.setEnabled(parts[1], b.enabled) }); } catch (e) { fail(e); }
+        }
+        if (parts[0] === 'tasks' && req.method === 'POST') {
+          const b = await readJson();
+          try { return jsonResponse(res, 200, { task: automation.tasks.add(b.title, b.due, b.repeat) }); } catch (e) { fail(e); }
+        }
+        return jsonResponse(res, 404, { error: { code: 'NOT_FOUND', message: 'API route not found.' } });
+      }
+
       if (pathname === '/api/chat' && req.method === 'POST') {
         const config = currentConfig();
         if (!allowAiRequest(req)) {
@@ -744,6 +776,29 @@ function createAppServer({ env = process.env } = {}) {
   return server;
 }
 
+/** Server-side LLM + transcription adapters for unattended automation (same provider config as /api/chat). */
+function makeAutomationAi(getConfig) {
+  const llm = async (messages) => {
+    const config = getConfig();
+    if (!config.configured) throw new Error('AI not configured');
+    const result = await fetchProvider(config, 'chat/completions', {
+      method: 'POST', headers: providerHeaders(config, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ model: config.model, messages, temperature: 0.5, max_tokens: 900 })
+    });
+    return normalizeProviderContent(result && result.choices && result.choices[0] && result.choices[0].message && result.choices[0].message.content);
+  };
+  const transcribe = async (audio, mime = 'audio/ogg') => {
+    const config = getConfig();
+    if (!config.configured || !config.transcriptionModel) throw new Error('Transcription is not configured');
+    const form = new FormData();
+    form.append('file', new Blob([audio], { type: mime }), 'voice.ogg');
+    form.append('model', config.transcriptionModel);
+    const r = await fetchProvider(config, 'audio/transcriptions', { method: 'POST', headers: providerHeaders(config), body: form });
+    return String((r && r.text) || '').trim();
+  };
+  return { llm, transcribe };
+}
+
 if (require.main === module) {
   loadDotEnv();
   const port = Number(process.env.PORT || 3000);
@@ -751,7 +806,15 @@ if (require.main === module) {
     console.error('PORT must be a valid TCP port number.');
     process.exitCode = 1;
   } else {
-    const server = createAppServer();
+    let automation = null;
+    if (process.env.JENNI_AUTOMATION !== '0') {
+      const ai = makeAutomationAi(() => resolveConfig());
+      const connections = createConnections({ storageDir: STORAGE_DIR, requestIsLocal });
+      automation = createAutomation({ storageDir: STORAGE_DIR, connections, llm: ai.llm, transcribe: ai.transcribe, env: process.env, systemPrompt: SYSTEM_PROMPT + PRIVATE_KNOWLEDGE });
+      automation.start();
+      console.log('Automation running: scheduler + Telegram bot (set JENNI_AUTOMATION=0 to disable).');
+    }
+    const server = createAppServer({ automation });
     server.listen(port, '0.0.0.0', () => {
       const address = server.address();
       console.log(`Jenni is listening on http://0.0.0.0:${address.port}`);
@@ -764,6 +827,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  makeAutomationAi,
   AUDIO_LIMIT_BYTES,
   JSON_LIMIT_BYTES,
   SYSTEM_PROMPT,

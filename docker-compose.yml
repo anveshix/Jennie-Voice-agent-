@@ -1,0 +1,8 @@
+# Always-on Jenni: scheduler + Telegram bot keep running with the phone off.
+services:
+  jenni:
+    build: .
+    restart: unless-stopped
+    ports: ["3000:3000"]
+    env_file: .env          # AI_API_KEY, JENNI_ACCESS_TOKEN, JENNI_DATA_KEY, GOOGLE_*
+    volumes: ["./storage:/app/storage"]

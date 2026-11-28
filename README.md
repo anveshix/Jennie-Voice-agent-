@@ -2,6 +2,8 @@
 
 Jenni is a small browser UI backed by a Node.js server. Typed messages and speech transcripts go to a server-configured, OpenAI-compatible chat provider. Replies are shown in the conversation and read aloud with the browser's speech synthesis. The server does not save chat history.
 
+> **Always-on agent:** scheduler, Telegram control, Gmail/Calendar, approvals and SA1 workflow — see [`AUTOMATION.md`](./AUTOMATION.md).
+
 ## No terminal? Use the phone app
 
 If you do not have a laptop with Node.js, you do not need any of the steps above.

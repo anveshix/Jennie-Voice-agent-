@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="hi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Jenni Auto</title>
+<style>body{font:15px system-ui;margin:0;padding:16px;max-width:760px;margin-inline:auto;background:#0f1115;color:#e8e8ea}h2{margin:20px 0 8px}.c{background:#1a1d24;border-radius:10px;padding:10px 12px;margin:6px 0}button{padding:8px 12px;border-radius:8px;border:0;background:#4f8cff;color:#fff;margin:2px}button.n{background:#555}small{opacity:.7}pre{white-space:pre-wrap;margin:4px 0}input{padding:8px;border-radius:8px;border:1px solid #444;background:#111;color:#eee}</style></head>
+<body><h1>Jenni Auto</h1><input id="tok" placeholder="access token (remote only)" type="password"> <button onclick="save()">Save</button>
+<h2>Approvals</h2><div id="ap"></div><h2>Run now</h2><div id="rc"></div><h2>Schedule</h2><div id="jb"></div><h2>Recent runs</h2><div id="rn"></div><h2>Tasks</h2><div id="tk"></div><input id="nt" placeholder="new task"><button onclick="addT()">Add</button>
+<script>
+const H=()=>({'content-type':'application/json','x-jenni-token':localStorage.getItem('jt')||''});
+const api=(p,m='GET',b)=>fetch('/api/auto/'+p,{method:m,headers:H(),body:b?JSON.stringify(b):undefined}).then(r=>r.json());
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function save(){localStorage.setItem('jt',tok.value);load()}
+async function dec(id,ok){await api('approvals/'+id,'POST',{approve:ok});load()}
+async function runR(r){await api('run','POST',{recipe:r});load()}
+async function tog(id,on){await api('jobs/'+id,'POST',{enabled:on});load()}
+async function addT(){if(nt.value){await api('tasks','POST',{title:nt.value});nt.value='';load()}}
+async function load(){const s=await api('status');if(s.error){ap.textContent=s.error.message;return}
+ap.innerHTML=s.pending.map(a=>`<div class=c><b>${esc(a.action)}</b><pre>${esc(a.preview)}</pre><button onclick="dec('${a.id}',true)">Approve</button><button class=n onclick="dec('${a.id}',false)">Reject</button></div>`).join('')||'<small>Nothing pending</small>';
+rc.innerHTML=s.recipes.filter(r=>r!=='sa1_results').map(r=>`<button onclick="runR('${r}')">${r}</button>`).join('')+'<br><small>SA1: send the marks CSV to the Telegram bot with caption /sa1 SA1 class</small>';
+jb.innerHTML=s.jobs.map(j=>`<div class=c>${j.enabled?'●':'○'} ${esc(j.id)} <small>${esc(j.cron)}</small> <button class=n onclick="tog('${j.id}',${!j.enabled})">${j.enabled?'Pause':'Enable'}</button></div>`).join('');
+rn.innerHTML=s.runs.map(r=>`<div class=c>${esc(r.status)} · ${esc(r.title)} <small>${esc(r.error||'')}</small></div>`).join('');
+tk.innerHTML=s.tasks.map(t=>`<div class=c>${esc(t.title)} <small>${esc(t.due||'')}</small></div>`).join('')||'<small>No open tasks</small>'}
+load();setInterval(load,15000);
+</script></body></html>

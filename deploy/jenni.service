@@ -1,0 +1,14 @@
+[Unit]
+Description=Jenni always-on agent
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/jenni
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+User=jenni
+EnvironmentFile=/opt/jenni/.env
+
+[Install]
+WantedBy=multi-user.target
